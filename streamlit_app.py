@@ -22,6 +22,9 @@ TWILIO_AUTH_TOKEN = 'a83cb0baf2dce52ba061171d3f69a9f9'
 TWILIO_NUMBER = "+12402930627"
 ADMIN_PHONE = "+351939227659"
 
+# URL da imagem de fundo
+BACKGROUND_IMAGE_URL = "https://i.imgur.com/G5qjO04.png" # Link da imagem
+
 def init_db():
     conn = sqlite3.connect('turnos.db', check_same_thread=False)
     c = conn.cursor()
@@ -49,21 +52,101 @@ def alerta_admin_sms(mensagem):
         client.messages.create(body=mensagem, from_=TWILIO_NUMBER, to=ADMIN_PHONE)
     except: pass
 
+# --- CONFIGURAÇÃO DA PÁGINA COM BACKGROUND ---
 st.set_page_config(page_title="Gestão de Eventos", layout="wide")
+
+# CSS para a imagem de fundo
+st.markdown(
+    f"""
+    <style>
+    .stApp {{
+        background-image: url({BACKGROUND_IMAGE_URL});
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-attachment: fixed; /* Fixa a imagem no scroll */
+    }}
+    /* Esconde o modo admin por toggle na sidebar */
+    .st-emotion-cache-1pxazr7 {{ /* Esta classe pode mudar entre versões do Streamlit */
+        visibility: hidden;
+        height: 0px;
+        position: absolute;
+    }}
+    /* Estilo para o botão invisível */
+    .invisible-button {{
+        background: transparent !important;
+        border: none !important;
+        color: transparent !important;
+        cursor: pointer;
+        padding: 0;
+        margin: 0;
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        width: 30px; /* Area clicavel */
+        height: 30px; /* Area clicavel */
+        z-index: 9999;
+    }}
+    /* Opcional: Icone de cadeado para o admin, apenas visível no canto */
+    .admin-icon {{
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        font-size: 24px;
+        color: #fff; /* Cor do cadeado */
+        cursor: pointer;
+        z-index: 9998; /* Abaixo do botão invisível */
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
 init_db()
 
-# --- SIDEBAR ---
+# --- SIDEBAR (Modo Administrador visível apenas com o botão dissimulado) ---
 with st.sidebar:
     st.title("⚙️ Painel")
-    modo_admin = st.toggle("Modo Administrador")
+    # Este toggle é o que controla o modo admin, mas será acionado pelo botão invisível
+    # O CSS acima vai tornar este toggle (e sua label) invisível
+    modo_admin = st.toggle("Ativar Painel de Gestão", key="admin_toggle_sidebar")
+    
+# --- Botão Dissimulado no Canto Inferior Direito ---
+# Este botão simula o clique no toggle da sidebar
+if st.markdown("""
+    <div class="admin-icon">🔒</div>
+    <button class="invisible-button" onclick="
+        var toggle = document.querySelector('[data-testid=\"stSidebarUserContent\"] .st-emotion-cache-1pxazr7 input[type=\"checkbox\"]');
+        if (toggle) {
+            toggle.checked = !toggle.checked;
+            toggle.dispatchEvent(new Event('change'));
+        }
+    "></button>
+    """, unsafe_allow_html=True):
+    pass # O clique é tratado via JavaScript
 
-if modo_admin:
-    st.header("🛠️ Administração")
-    senha = st.text_input("Senha", type="password")
+if modo_admin: # A lógica de admin é ativada se o toggle for true (via clique no botão invisível)
+    st.sidebar.header("🛠️ Administração")
+    senha = st.sidebar.text_input("Senha", type="password", key="admin_senha_sidebar")
     if senha == ADMIN_PASSWORD:
-        tab1, tab2, tab3 = st.tabs(["➕ Gerar Turnos", "📋 Inscrições", "📥 Exportar Excel"])
+        st.sidebar.success("Acesso Admin Concedido!")
         
-        with tab1:
+        # Botões de acesso no modo administrador
+        if st.sidebar.button("➕ Gerar Turnos", key="btn_gerar_turnos"):
+            st.session_state.admin_tab = "gerar_turnos"
+        if st.sidebar.button("📋 Ver Inscrições", key="btn_ver_inscricoes"):
+            st.session_state.admin_tab = "ver_inscricoes"
+        if st.sidebar.button("📥 Exportar Excel", key="btn_exportar_excel"):
+            st.session_state.admin_tab = "exportar_excel"
+
+        if "admin_tab" not in st.session_state:
+            st.session_state.admin_tab = "ver_inscricoes" # Default
+        
+        st.subheader("Painel de Administrador")
+        if st.session_state.admin_tab == "gerar_turnos":
+            st.subheader("Processamento Automático de Turnos")
             texto = st.text_area("Cole o texto bruto aqui:", height=250)
             if st.button("Processar e Criar Turnos"):
                 linhas = texto.split('\n')
@@ -73,91 +156,4 @@ if modo_admin:
                     if not l or any(x in l.upper() for x in ["FOGO", "PSG"]): continue
                     if l.isupper() and len(l) > 3 and "DIA" not in l: local = l
                     dm = re.search(r"(DIA \d+|\b\d{2}\b)", l, re.IGNORECASE)
-                    if dm and not re.search(r"\d+h", l): data = dm.group(1).upper()
-                    hm = re.search(r"(Das \d{1,2}h as \d{1,2}h.*)", l, re.IGNORECASE)
-                    if hm and local:
-                        prefixo_data = f" ({data})" if data else ""
-                        p_final = f"{local}{prefixo_data} | {hm.group(1)}"
-                        try:
-                            conn = sqlite3.connect('turnos.db')
-                            conn.execute("INSERT INTO configuracao_turnos VALUES (?)", (p_final,))
-                            conn.commit()
-                            conn.close()
-                        except: pass
-                st.rerun()
-
-        with tab2:
-            conn = sqlite3.connect('turnos.db')
-            registos = conn.execute("SELECT * FROM escalas").fetchall()
-            conn.close()
-            for p, n, t, e in registos:
-                c1, c2 = st.columns([4, 1])
-                c1.write(f"📍 **{p}** | 👤 {n} ({t})")
-                if c2.button("Eliminar", key=f"del_{p}"):
-                    conn = sqlite3.connect('turnos.db')
-                    conn.execute("DELETE FROM escalas WHERE posto = ?", (p,))
-                    conn.commit()
-                    conn.close()
-                    st.rerun()
-
-        with tab3:
-            conn = sqlite3.connect('turnos.db')
-            df = pd.read_sql_query("SELECT * FROM escalas", conn)
-            conn.close()
-            if not df.empty:
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, index=False)
-                st.download_button("📥 Descarregar Excel", output.getvalue(), "lista_turnos.xlsx")
-
-# --- INTERFACE UTILIZADOR ---
-st.title("🎆 Reserva de Turnos")
-
-conn = sqlite3.connect('turnos.db')
-postos_db = [r[0] for r in conn.execute("SELECT posto FROM configuracao_turnos").fetchall()]
-dados_escalas = conn.execute("SELECT posto, nome, telefone FROM escalas").fetchall()
-ocupados = {r[0]: r[1] for r in dados_escalas}
-nomes_registados = [r[1].upper() for r in dados_escalas]
-telefones_registados = [r[2] for r in dados_escalas]
-conn.close()
-
-if postos_db:
-    with st.form("registo_oficial"):
-        c1, c2 = st.columns(2)
-        nome_f = c1.text_input("Nome Completo").strip()
-        tel_f = c1.text_input("Telemóvel").strip()
-        email_f = c2.text_input("E-mail para Confirmação").strip()
-        escolha_f = c2.selectbox("Selecione o Turno", postos_db)
-        btn_confirmar = st.form_submit_button("Confirmar Marcação")
-
-    if btn_confirmar:
-        if not (nome_f and tel_f and email_f):
-            st.error("Preencha todos os campos.")
-        elif nome_f.upper() in nomes_registados or tel_f in telefones_registados:
-            st.warning(f"Atenção: O utilizador {nome_f} ou o telemóvel {tel_f} já possui um turno atribuído. Só é permitida uma inscrição por pessoa.")
-        elif escolha_f in ocupados:
-            st.error("Este turno já foi reservado.")
-        else:
-            try:
-                conn = sqlite3.connect('turnos.db')
-                conn.execute("INSERT INTO escalas VALUES (?,?,?,?)", (escolha_f, nome_f, tel_f, email_f))
-                conn.commit()
-                conn.close()
-                enviar_confirmacao_email(email_f, nome_f, escolha_f)
-                alerta_admin_sms(f"Novo: {nome_f} - {escolha_f}")
-                st.success("Confirmado! Verifique o seu e-mail.")
-                st.balloons()
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro: {e}")
-
-    st.divider()
-    col_a, col_b = st.columns(2)
-    for i, p in enumerate(postos_db):
-        target = col_a if i % 2 == 0 else col_b
-        if p in ocupados:
-            target.error(f"❌ {p} (Ocupado: {ocupados[p]})")
-        else:
-            target.success(f"✅ {p}")
-else:
-    st.warning("Aguarde a configuração dos postos.")
+                    if dm and not re
