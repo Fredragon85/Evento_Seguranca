@@ -21,12 +21,13 @@ TELEGRAM_CHAT_ID = "@sua_canal_seguranca"
 
 # --- DATABASE ENGINE ---
 def init_db(force_reset=False):
-    conn = sqlite3.connect('sistema_v44_supreme.db', check_same_thread=False)
+    conn = sqlite3.connect('sistema_v45_supreme.db', check_same_thread=False)
     c = conn.cursor()
     if force_reset:
         c.execute("DROP TABLE IF EXISTS escalas")
         c.execute("DROP TABLE IF EXISTS configuracao_turnos")
         c.execute("DROP TABLE IF EXISTS clientes")
+        c.execute("DROP TABLE IF EXISTS logs_notificacoes")
     
     c.execute('''CREATE TABLE IF NOT EXISTS escalas 
                  (posto TEXT PRIMARY KEY, nome TEXT, telefone TEXT, email TEXT, data TEXT, 
@@ -36,6 +37,13 @@ def init_db(force_reset=False):
     c.execute('''CREATE TABLE IF NOT EXISTS clientes 
                  (email TEXT PRIMARY KEY, senha TEXT, nome TEXT, telefone TEXT, 
                   carta TEXT, viatura TEXT, cartoes TEXT, ranking INTEGER DEFAULT 5, docs BLOB)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS logs_notificacoes 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, tipo TEXT, mensagem TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit(); conn.close()
+
+def log_notif(email, tipo, msg):
+    conn = sqlite3.connect('sistema_v45_supreme.db')
+    conn.execute("INSERT INTO logs_notificacoes (email, tipo, mensagem) VALUES (?,?,?)", (email, tipo, msg))
     conn.commit(); conn.close()
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -46,20 +54,26 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def multicanal_notify(email, tel, nome, posto, acao="CONFIRMADO"):
     msg = f"Ola {nome}, o seu turno {posto} foi {acao}."
+    # Email
     try:
         m = MIMEText(msg); m['Subject'] = acao; m['From'] = EMAIL_USER; m['To'] = email
         with smtplib.SMTP("smtp.gmail.com", 587) as s:
             s.starttls(); s.login(EMAIL_USER, EMAIL_PASS); s.send_message(m)
-    except: pass
-    tw = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    try: tw.messages.create(from_=TWILIO_WHATSAPP, body=msg, to=f"whatsapp:{tel}")
-    except: pass
-    try: requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+        log_notif(email, "EMAIL", "Sucesso")
+    except: log_notif(email, "EMAIL", "Erro")
+    # Twilio/WA
+    try:
+        tw = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        tw.messages.create(from_=TWILIO_WHATSAPP, body=msg, to=f"whatsapp:{tel}")
+        log_notif(email, "WHATSAPP", "Enviado")
+    except: log_notif(email, "WHATSAPP", "Erro")
+    # Telegram
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                        data={"chat_id": TELEGRAM_CHAT_ID, "text": f"📢 {acao}: {nome} em {posto}"})
     except: pass
 
-# --- INICIALIZAÇÃO ---
-st.set_page_config(page_title="V44 OMNI SUPREME", layout="wide")
+st.set_page_config(page_title="V45 OMNI SUPREME", layout="wide")
 init_db()
 
 if 'admin_auth' not in st.session_state: st.session_state.admin_auth = False
@@ -68,31 +82,23 @@ if 'preview_data' not in st.session_state: st.session_state.preview_data = []
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("🛡️ SUPREME v44")
-    if st.button("🔄 REFRESH"): st.rerun()
-    st.divider()
+    st.title("🛡️ SUPREME v45")
     if st.session_state.admin_auth:
-        st.success("ADMIN MODE")
+        st.success("MODO ADMIN")
         if st.button("🔒 LOGOUT"): st.session_state.admin_auth = False; st.rerun()
     else:
         with st.form("adm_login"):
-            pw = st.text_input("Admin Password", type="password")
+            pw = st.text_input("Acesso", type="password")
             if st.form_submit_button("🔓"):
                 if pw == ADMIN_PASSWORD: st.session_state.admin_auth = True; st.rerun()
-    st.divider()
-    nav = st.radio("Módulos", ["Turnos em Aberto", "Área de Cliente", "Registo Profissional"])
+    nav = st.radio("Menu", ["Turnos em Aberto", "Área de Cliente", "Registo"])
 
 # --- MODULO ADMIN ---
 if st.session_state.admin_auth:
-    t1, t2, t3, t4 = st.tabs(["🚀 Gerador", "📋 Gestão Postos", "📥 Inscrições", "⚠️ Sistema"])
+    t1, t2, t3, t4, t5 = st.tabs(["🚀 Gerador", "👥 Staff & Info", "📥 Inscrições", "📋 Postos Ativos", "⚠️ Sistema"])
     
     with t1:
-        st.subheader("Processamento de Postos")
-        txt_input = st.text_area("Cole o texto bruto aqui", height=150)
-        c1, c2 = st.columns(2)
-        lat_ref = c1.number_input("Lat (Almeirim)", value=39.2081, format="%.6f")
-        lon_ref = c2.number_input("Lon (Almeirim)", value=-8.6277, format="%.6f")
-
+        txt_input = st.text_area("Texto Bruto", height=150)
         if st.button("🔍 GERAR PREVISUALIZAÇÃO"):
             if txt_input:
                 preview_list = []
@@ -105,52 +111,75 @@ if st.session_state.admin_auth:
                         p_id = f"{dia} | {loc} | {l}"
                         preview_list.append({"ID": p_id, "Local": loc, "Horário": l})
                 st.session_state.preview_data = preview_list
-            else: st.error("Insira o texto antes de gerar.")
-
         if st.session_state.preview_data:
-            st.divider()
             st.table(pd.DataFrame(st.session_state.preview_data))
-            if st.button("✅ CONFIRMAR E PUBLICAR TUDO", use_container_width=True):
-                conn = sqlite3.connect('sistema_v44_supreme.db')
+            if st.button("✅ PUBLICAR TUDO"):
+                conn = sqlite3.connect('sistema_v45_supreme.db')
                 for item in st.session_state.preview_data:
-                    conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?,?,?,?)", 
-                                 (item['ID'], "PSG-REAL", "2025-12-31", item['Local'], lat_ref, lon_ref))
-                conn.commit(); conn.close()
-                st.session_state.preview_data = []
-                st.success("Postos Publicados!"); time.sleep(1); st.rerun()
+                    conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?,?,?,?)", (item['ID'], "PSG-REAL", "2025-12-31", item['Local'], 39.2081, -8.6277))
+                conn.commit(); conn.close(); st.session_state.preview_data = []; st.rerun()
 
     with t2:
-        conn = sqlite3.connect('sistema_v44_supreme.db')
-        ativos = conn.execute("SELECT posto FROM configuracao_turnos").fetchall()
-        for p in ativos:
-            with st.container(border=True):
-                col1, col2 = st.columns([5, 1])
-                col1.write(p[0])
-                if col2.button("🗑️", key=f"del_{p[0]}"):
-                    conn.execute("DELETE FROM configuracao_turnos WHERE posto=?", (p[0],))
-                    conn.execute("DELETE FROM escalas WHERE posto=?", (p[0],))
-                    conn.commit(); st.rerun()
+        st.subheader("Informação Detalhada do Colaborador")
+        conn = sqlite3.connect('sistema_v45_supreme.db')
+        staff = conn.execute("SELECT email, nome, telefone, cartoes, ranking FROM clientes").fetchall()
+        for s_email, s_nome, s_tel, s_cart, s_rank in staff:
+            with st.expander(f"👤 {s_nome} ({s_email})"):
+                c1, c2 = st.columns(2)
+                c1.write(f"**Telefone:** {s_tel}")
+                c1.write(f"**Cartões:** {s_cart}")
+                c1.write(f"**Ranking:** {'⭐'*s_rank}")
+                # Turnos Reservados
+                reservas = conn.execute("SELECT posto, status, checkin FROM escalas WHERE email=?", (s_email,)).fetchall()
+                c2.write("**Turnos Reservados:**")
+                if reservas:
+                    for r_p, r_s, r_c in reservas:
+                        chk_status = "✅ Local" if r_c else "⏳ GPS"
+                        c2.caption(f"- {r_p} | {r_s} | {chk_status}")
+                else: c2.caption("Sem reservas.")
+                # Histórico Notificações
+                st.divider()
+                st.write("**Histórico de Envio de Mensagens/Emails:**")
+                logs = conn.execute("SELECT tipo, mensagem, timestamp FROM logs_notificacoes WHERE email=? ORDER BY timestamp DESC LIMIT 5", (s_email,)).fetchall()
+                if logs:
+                    for l_t, l_m, l_ts in logs:
+                        st.caption(f"{l_ts} | {l_t}: {l_m}")
+                else: st.caption("Nenhuma notificação enviada.")
+                if st.button("🗑️ Eliminar Staff", key=f"del_st_{s_email}"):
+                    conn.execute("DELETE FROM clientes WHERE email=?", (s_email,)); conn.commit(); st.rerun()
         conn.close()
 
     with t3:
-        conn = sqlite3.connect('sistema_v44_supreme.db')
-        insc = conn.execute("SELECT * FROM escalas").fetchall()
+        st.subheader("Modo Confirmação")
+        conn = sqlite3.connect('sistema_v45_supreme.db')
+        insc = conn.execute("SELECT * FROM escalas WHERE status='Pendente'").fetchall()
         for r in insc:
-            with st.expander(f"{r[5]} | {r[1]} -> {r[0]}"):
-                if r[5] == 'Pendente' and st.button("Validar", key=f"val_{r[0]}"):
+            with st.container(border=True):
+                col1, col2 = st.columns([4, 1])
+                col1.write(f"**{r[1]}** quer o posto: `{r[0]}`")
+                if col2.button("✅ Confirmar", key=f"v_{r[0]}"):
                     conn.execute("UPDATE escalas SET status='Confirmado' WHERE posto=?", (r[0],))
                     conn.commit(); multicanal_notify(r[3], r[2], r[1], r[0]); st.rerun()
-                if st.button("Remover", key=f"rem_{r[0]}"):
-                    conn.execute("DELETE FROM escalas WHERE posto=?", (r[0],)); conn.commit(); st.rerun()
         conn.close()
 
     with t4:
-        if st.button("🚨 NUCLEAR RESET DB"): init_db(True); st.rerun()
+        conn = sqlite3.connect('sistema_v45_supreme.db')
+        ativos = conn.execute("SELECT posto FROM configuracao_turnos").fetchall()
+        for p in ativos:
+            with st.container(border=True):
+                c1, c2 = st.columns([5, 1])
+                c1.write(p[0])
+                if c2.button("🗑️", key=f"rm_p_{p[0]}"):
+                    conn.execute("DELETE FROM configuracao_turnos WHERE posto=?"); conn.commit(); st.rerun()
+        conn.close()
 
-# --- MODULO RESERVA ---
+    with t5:
+        if st.button("🚨 NUCLEAR RESET"): init_db(True); st.rerun()
+
+# --- MÓDULOS PÚBLICOS (RESERVA, CLIENTE, REGISTO) ---
 elif nav == "Turnos em Aberto":
-    st.header("📅 Escalas Disponíveis")
-    conn = sqlite3.connect('sistema_v44_supreme.db')
+    st.header("📅 Escalas")
+    conn = sqlite3.connect('sistema_v45_supreme.db')
     postos = conn.execute("SELECT posto FROM configuracao_turnos").fetchall()
     ocupados = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
     for p in postos:
@@ -166,42 +195,34 @@ elif nav == "Turnos em Aberto":
                     conn.commit(); st.rerun()
     conn.close()
 
-# --- MODULO ÁREA CLIENTE ---
 elif nav == "Área de Cliente":
     if st.session_state.user_email:
-        conn = sqlite3.connect('sistema_v44_supreme.db')
+        conn = sqlite3.connect('sistema_v45_supreme.db')
         u = conn.execute("SELECT nome FROM clientes WHERE email=?", (st.session_state.user_email,)).fetchone()
-        st.subheader(f"Olá {u[0]}")
+        st.subheader(f"Área de {u[0]}")
         meus = conn.execute("SELECT e.posto, t.lat, t.lon, e.checkin FROM escalas e JOIN configuracao_turnos t ON e.posto = t.posto WHERE e.email = ? AND e.status = 'Confirmado'", (st.session_state.user_email,)).fetchall()
         for p, lat, lon, chk in meus:
             with st.container(border=True):
                 st.write(p)
-                if not chk and st.button(f"Validar GPS: {p}"):
+                if not chk and st.button(f"Validar Local: {p}"):
                     if haversine(39.2081, -8.6277, lat, lon) <= 500:
-                        conn.execute("UPDATE escalas SET checkin=1 WHERE posto=?", (p,)); conn.commit(); st.rerun()
+                        conn.execute("UPDATE escalas SET checkin=1 WHERE posto=?"); conn.commit(); st.rerun()
         if st.button("Sair"): st.session_state.user_email = None; st.rerun()
         conn.close()
     else:
         with st.form("l"):
             e, s = st.text_input("Email"), st.text_input("Senha", type="password")
             if st.form_submit_button("Entrar"):
-                conn = sqlite3.connect('sistema_v44_supreme.db')
+                conn = sqlite3.connect('sistema_v45_supreme.db')
                 if conn.execute("SELECT 1 FROM clientes WHERE email=? AND senha=?", (e, s)).fetchone():
                     st.session_state.user_email = e; st.rerun()
                 conn.close()
 
-# --- MODULO REGISTO (PERMITE SOBREPOR EMAIL PARA TESTES) ---
-elif nav == "Registo Profissional":
-    with st.form("reg_final"):
-        st.info("💡 Modo de Teste: Pode registar o mesmo email para atualizar os dados.")
+elif nav == "Registo":
+    with st.form("r"):
         n, e, t, s = st.text_input("Nome"), st.text_input("Email"), st.text_input("Tel"), st.text_input("Senha", type="password")
-        cart = st.multiselect("Qualificações", ["VIG", "ARE", "ARD", "SPR", "COORDENADOR"])
-        if st.form_submit_button("Criar / Atualizar Conta"):
-            conn = sqlite3.connect('sistema_v44_supreme.db')
-            # INSERT OR REPLACE remove a restrição de erro por email já existente
-            conn.execute("INSERT OR REPLACE INTO clientes VALUES (?,?,?,?,?,?,?,?,?)", 
-                         (e, s, n, t, "Sim", "Sim", ",".join(cart), 5, None))
-            conn.commit(); conn.close()
-            st.session_state.user_email = e
-            st.success("Dados de Colaborador Registados/Atualizados!")
-            time.sleep(1); st.rerun()
+        cart = st.multiselect("Cartões", ["VIG", "ARE", "ARD", "SPR", "COORDENADOR"])
+        if st.form_submit_button("Registar/Atualizar"):
+            conn = sqlite3.connect('sistema_v45_supreme.db')
+            conn.execute("INSERT OR REPLACE INTO clientes VALUES (?,?,?,?,?,?,?,?,?)", (e, s, n, t, "Sim", "Sim", ",".join(cart), 5, None))
+            conn.commit(); conn.close(); st.session_state.user_email = e; st.rerun()
