@@ -34,27 +34,20 @@ def init_db():
 
 def enviar_email(dest, assunto, corpo):
     try:
-        msg = MIMEText(corpo)
-        msg['Subject'] = assunto
-        msg['From'] = EMAIL_USER
-        msg['To'] = dest
+        msg = MIMEText(corpo); msg['Subject'] = assunto; msg['From'] = EMAIL_USER; msg['To'] = dest
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-            s.starttls()
-            s.login(EMAIL_USER, EMAIL_PASS)
-            s.send_message(msg)
+            s.starttls(); s.login(EMAIL_USER, EMAIL_PASS); s.send_message(msg)
         return True
-    except:
-        return False
+    except: return False
 
 def enviar_sms(num, msg):
     try:
         c = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         c.messages.create(body=msg, from_=TWILIO_NUMBER, to=num)
         return True
-    except:
-        return False
+    except: return False
 
-st.set_page_config(page_title="Gestão de Segurança v4.1", layout="wide")
+st.set_page_config(page_title="Gestão de Segurança v4.2", layout="wide")
 init_db()
 
 st.markdown(f"""<style>.stApp {{ background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url("{BG_IMG}"); background-size: cover; }}</style>""", unsafe_allow_html=True)
@@ -81,26 +74,30 @@ with st.sidebar:
 # --- MODO ADMIN ---
 if admin_check and st.session_state.get('admin_auth', False):
     st.header("🛠️ Administração")
-    t1, t2, t3 = st.tabs(["Estatísticas", "Gerar Postos", "Empresas"])
+    t1, t2, t3, t4 = st.tabs(["Estatísticas", "Gerar Postos", "Gestão Inscrições", "Empresas"])
 
     with t3:
-        n_emp = st.text_input("Nova Empresa")
-        if st.button("Adicionar Empresa"):
-            conn = sqlite3.connect('sistema.db')
-            conn.execute("INSERT OR IGNORE INTO empresas VALUES (?)", (n_emp.strip(),))
-            conn.commit()
-            conn.close()
-            st.rerun()
+        st.subheader("Lista de Inscrições Atuais")
+        conn = sqlite3.connect('sistema.db')
+        inscricoes = conn.execute("SELECT posto, nome, telefone FROM escalas").fetchall()
         
-        if empresas:
-            rem_emp = st.selectbox("Remover Empresa:", empresas)
-            if st.button("Eliminar"):
-                conn = sqlite3.connect('sistema.db')
-                conn.execute("DELETE FROM empresas WHERE nome=?", (rem_emp,))
-                conn.execute("DELETE FROM configuracao_turnos WHERE empresa=?", (rem_emp,))
+        if inscricoes:
+            for p, n, t in inscricoes:
+                col_i, col_b = st.columns([4, 1])
+                col_i.write(f"📍 **{p}** | 👤 {n} ({t})")
+                if col_b.button("🗑️ Eliminar", key=f"del_{p}"):
+                    conn.execute("DELETE FROM escalas WHERE posto=?", (p,))
+                    conn.commit()
+                    st.rerun()
+            
+            st.divider()
+            if st.button("⚠️ LIMPAR TODAS AS INSCRIÇÕES"):
+                conn.execute("DELETE FROM escalas")
                 conn.commit()
-                conn.close()
                 st.rerun()
+        else:
+            st.info("Nenhuma inscrição registada.")
+        conn.close()
 
     with t2:
         if not empresas:
@@ -115,17 +112,40 @@ if admin_check and st.session_state.get('admin_auth', False):
                 conn = sqlite3.connect('sistema.db')
                 for l in linhas:
                     l = l.strip()
-                    if not l or any(x in l.upper() for x in ["FOGO", "PSG
+                    if not l or any(x in l.upper() for x in ["FOGO", "PSG"]): continue
+                    tem_h = re.search(r"\d+h", l, re.IGNORECASE)
+                    if l.isupper() and len(l) > 3 and not tem_h:
+                        local_f = l
+                    else:
+                        p_id = f"{local_f} | {l} ({alvo_dat.strftime('%d/%m')})"
+                        conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?)", (p_id, alvo_emp, alvo_dat.strftime('%Y-%m-%d')))
+                conn.commit(); conn.close(); st.rerun()
+
+    with t4:
+        n_emp = st.text_input("Nova Empresa")
+        if st.button("Adicionar Empresa"):
+            conn = sqlite3.connect('sistema.db'); conn.execute("INSERT OR IGNORE INTO empresas VALUES (?)", (n_emp.strip(),))
+            conn.commit(); conn.close(); st.rerun()
+
+    with t1:
+        conn = sqlite3.connect('sistema.db')
+        df_p = pd.read_sql_query("SELECT * FROM configuracao_turnos", conn)
+        df_e = pd.read_sql_query("SELECT * FROM escalas", conn)
+        conn.close()
+        if not df_p.empty:
+            df_m = pd.merge(df_p, df_e, on="posto", how="left")
+            df_m['Status'] = df_m['nome'].apply(lambda x: 'Ocupado' if pd.notnull(x) else 'Livre')
+            fig = px.bar(df_m, x="empresa", color="Status", barmode="group", color_discrete_map={'Livre':'#2ecc71', 'Ocupado':'#e74c3c'}, template="plotly_dark")
+            st.plotly_chart(fig, use_container_width=True)
 
 # --- INTERFACE UTILIZADOR ---
 elif menu == "Reserva de Turnos":
-    st.title(f"📅 Disponibilidade: {data_filtro.strftime('%d/%m/%Y')}")
+    st.title(f"📅 Postos: {data_filtro.strftime('%d/%m/%Y')}")
     conn = sqlite3.connect('sistema.db')
     query = "SELECT posto FROM configuracao_turnos WHERE data = ?"
     params = [data_filtro.strftime('%Y-%m-%d')]
     if emp_filtro != "Todas":
-        query += " AND empresa = ?"
-        params.append(emp_filtro)
+        query += " AND empresa = ?"; params.append(emp_filtro)
     
     lista_postos = [r[0] for r in conn.execute(query, params).fetchall()]
     dict_ocupados = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
@@ -134,19 +154,42 @@ elif menu == "Reserva de Turnos":
     if lista_postos:
         with st.form("reserva_final"):
             c1, c2 = st.columns(2)
-            u_nome = c1.text_input("Nome")
-            u_tel = c1.text_input("Telemóvel")
-            u_mail = c2.text_input("Email")
-            u_escolha = c2.selectbox("Selecione o Turno", lista_postos)
+            u_nome, u_tel = c1.text_input("Nome"), c1.text_input("Telemóvel")
+            u_mail, u_escolha = c2.text_input("Email"), c2.selectbox("Turno", lista_postos)
             u_sms = st.checkbox("Confirmar por SMS")
-            
             if st.form_submit_button("Confirmar Reserva"):
-                if not (u_nome and u_tel and u_mail): 
-                    st.error("Preencha todos os dados.")
-                elif u_escolha in dict_ocupados: 
-                    st.error("Turno ocupado.")
-                else:
+                if u_nome and u_tel and u_mail:
                     conn = sqlite3.connect('sistema.db')
-                    conn.execute("INSERT INTO escalas VALUES (?,?,?,?,?)", 
-                                 (u_escolha,
+                    conn.execute("INSERT INTO escalas VALUES (?,?,?,?,?)", (u_escolha, u_nome, u_tel, u_mail, data_filtro.strftime('%Y-%m-%d')))
+                    conn.commit(); conn.close()
+                    enviar_email(u_mail, "Reserva Confirmada", f"Turno: {u_escolha}")
+                    if u_sms: enviar_sms(u_tel, f"Confirmado: {u_escolha}")
+                    st.success("Reserva Concluída!"); st.rerun()
+                else: st.error("Preencha todos os campos.")
 
+        st.divider()
+        cols = st.columns(3)
+        for i, p in enumerate(lista_postos):
+            with cols[i%3]:
+                if p in dict_ocupados: st.error(f"❌ {p}\n({dict_ocupados[p]})")
+                else: st.success(f"✅ {p}")
+
+elif menu == "Área de Cliente":
+    e, s = st.text_input("Email"), st.text_input("Senha", type="password")
+    if st.button("Login"):
+        conn = sqlite3.connect('sistema.db')
+        u = conn.execute("SELECT nome FROM clientes WHERE email=? AND senha=?", (e, s)).fetchone()
+        if u:
+            st.success(f"Olá {u[0]}!")
+            res = conn.execute("SELECT posto FROM escalas WHERE email=?", (e,)).fetchone()
+            if res: st.info(f"O seu Turno: {res[0]}")
+        else: st.error("Dados incorretos.")
+        conn.close()
+
+elif menu == "Criar Conta":
+    with st.form("reg"):
+        n, e, t, s = st.text_input("Nome"), st.text_input("Email"), st.text_input("Tel"), st.text_input("Senha", type="password")
+        if st.form_submit_button("Criar"):
+            conn = sqlite3.connect('sistema.db'); conn.execute("INSERT INTO clientes VALUES (?,?,?,?)", (e, s, n, t))
+            conn.commit(); conn.close(); st.success("Conta Criada!")
+            
