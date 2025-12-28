@@ -1,4 +1,4 @@
-iimport streamlit as st
+import streamlit as st
 import sqlite3
 import pandas as pd
 import smtplib
@@ -245,3 +245,4 @@ elif nav == "Registo":
                 conn.execute("INSERT OR REPLACE INTO clientes (email, senha, nome, telefone, carta, viatura, cartoes) VALUES (?,?,?,?,?,?,?)", 
                              (e, hashed, n, t, "Sim", "Sim", "VIG"))
             st.session_state.user_email = e; st.rerun()
+
