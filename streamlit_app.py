@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 from twilio.rest import Client
 from datetime import datetime
 import plotly.express as px
+from io import BytesIO
 
 # --- CONFIGURAÇÕES ---
 ADMIN_PASSWORD = "ADMIN"
@@ -46,7 +47,7 @@ def enviar_sms(num, msg):
         return True
     except: return False
 
-st.set_page_config(page_title="Gestão de Segurança v3.1", layout="wide")
+st.set_page_config(page_title="Gestão de Segurança v3.4", layout="wide")
 init_db()
 
 st.markdown(f"""<style>.stApp {{ background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url("{BG_IMG}"); background-size: cover; }}</style>""", unsafe_allow_html=True)
@@ -58,18 +59,19 @@ with st.sidebar:
     empresas = [r[0] for r in conn.execute("SELECT nome FROM empresas").fetchall()]
     conn.close()
     
-    empresa_filtro = st.selectbox("Empresa", ["Todas"] + empresas)
-    data_filtro = st.date_input("Data", datetime.now())
+    empresa_filtro = st.selectbox("Filtrar Empresa", ["Todas"] + empresas)
+    data_filtro = st.date_input("Filtrar Data", datetime.now())
     menu = st.radio("Menu:", ["Reserva de Turnos", "Área de Cliente", "Criar Conta"])
     
     st.divider()
-    if st.checkbox("⚙️ Admin Mode"):
+    admin_check = st.checkbox("⚙️ Admin Mode")
+    if admin_check:
         pwd = st.text_input("Senha", type="password")
         if pwd == ADMIN_PASSWORD: st.session_state.admin_auth = True
         else: st.session_state.admin_auth = False
 
 # --- PAINEL ESTATÍSTICO E ADMIN ---
-if st.session_state.get('admin_auth', False):
+if admin_check and st.session_state.get('admin_auth', False):
     st.header("📊 Dashboard Administrativo")
     t1, t2, t3 = st.tabs(["Estatísticas", "Gerar Postos", "Empresas"])
     
@@ -82,27 +84,48 @@ if st.session_state.get('admin_auth', False):
         if not df_postos.empty:
             df_merged = pd.merge(df_postos, df_escalas, on="posto", how="left")
             df_merged['Status'] = df_merged['nome'].apply(lambda x: 'Ocupado' if pd.notnull(x) else 'Livre')
-            fig = px.histogram(df_merged, x="empresa", color="Status", barmode="group", 
-                               title="Ocupação de Turnos por Empresa", color_discrete_map={'Livre':'green', 'Ocupado':'red'})
+            
+            fig = px.bar(df_merged, x="empresa", color="Status", 
+                         title="Estado dos Turnos por Empresa",
+                         barmode="group",
+                         color_discrete_map={'Livre':'#2ecc71', 'Ocupado':'#e74c3c'},
+                         template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
+            
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total de Postos", len(df_postos))
+            c1.metric("Total Postos", len(df_postos))
             c2.metric("Ocupados", len(df_escalas))
-            c3.metric("Taxa de Ocupação", f"{(len(df_escalas)/len(df_postos)*100):.1f}%")
+            c3.metric("Taxa", f"{(len(df_escalas)/len(df_postos)*100):.1f}%" if len(df_postos)>0 else "0%")
+            
+            st.divider()
+            # Botão de Exportação
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_merged.to_excel(writer, index=False, sheet_name='Relatorio_Turnos')
+            st.download_button(
+                label="📥 Descarregar Relatório Excel",
+                data=output.getvalue(),
+                file_name=f"relatorio_seguranca_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("Sem dados para exportar.")
 
     with t2:
-        emp_alvo = st.selectbox("Empresa:", empresas)
-        data_alvo = st.date_input("Data Evento:", datetime.now(), key="admin_data")
-        txt = st.text_area("Texto Bruto (Das XXh as XXh):")
-        if st.button("Gerar Turnos"):
-            for l in txt.split('\n'):
-                if "Das" in l:
-                    conn = sqlite3.connect('sistema.db')
-                    p_id = f"{emp_alvo} | {l} ({data_alvo})"
-                    conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?)", 
-                                 (p_id, emp_alvo, data_alvo.strftime('%Y-%m-%d')))
-                    conn.commit(); conn.close()
-            st.rerun()
+        if empresas:
+            emp_alvo = st.selectbox("Empresa:", empresas)
+            data_alvo = st.date_input("Data Evento:", datetime.now(), key="admin_data")
+            txt = st.text_area("Texto Bruto (Das XXh as XXh):")
+            if st.button("Gerar Turnos"):
+                for l in txt.split('\n'):
+                    if "Das" in l:
+                        conn = sqlite3.connect('sistema.db')
+                        p_id = f"{emp_alvo} | {l} ({data_alvo})"
+                        conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?)", 
+                                     (p_id, emp_alvo, data_alvo.strftime('%Y-%m-%d')))
+                        conn.commit(); conn.close()
+                st.rerun()
+        else: st.warning("Crie uma empresa primeiro.")
 
     with t3:
         nova_e = st.text_input("Nome Empresa")
@@ -142,7 +165,7 @@ elif menu == "Reserva de Turnos":
             escolha = c2.selectbox("Turno", postos)
             q_sms = st.checkbox("Confirmar por SMS")
             if st.form_submit_button("Reservar"):
-                if not (nome and tel and mail): st.error("Preencha todos os campos")
+                if not (nome and tel and mail): st.error("Erro: Preencha tudo")
                 else:
                     conn = sqlite3.connect('sistema.db')
                     conn.execute("INSERT INTO escalas VALUES (?,?,?,?,?)", 
