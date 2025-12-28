@@ -36,7 +36,6 @@ def init_db():
 
 def enviar_notificacao_filtrada(email_dest, tel_dest, nome, posto, p_mail, p_sms):
     mensagem = f"Ola {nome}, o seu turno no posto {posto} foi CONFIRMADO. Bom trabalho!"
-    
     if p_mail == 1:
         try:
             msg = MIMEText(mensagem); msg['Subject'] = "CONFIRMACAO DE TURNO"
@@ -44,62 +43,62 @@ def enviar_notificacao_filtrada(email_dest, tel_dest, nome, posto, p_mail, p_sms
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
                 s.starttls(); s.login(EMAIL_USER, EMAIL_PASS); s.send_message(msg)
         except: pass
-
     if p_sms == 1:
         try:
             client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
             client.messages.create(body=mensagem, from_=TWILIO_NUMBER, to=tel_dest)
         except: pass
 
-st.set_page_config(page_title="Gestão de Segurança v12.0", layout="wide")
+st.set_page_config(page_title="Gestão de Segurança v14.0", layout="wide")
 init_db()
 
 st.markdown(f"""<style>.stApp {{ background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url("{BG_IMG}"); background-size: cover; }}</style>""", unsafe_allow_html=True)
 
+# --- ESTADO DE SESSÃO ---
 if 'user_email' not in st.session_state: st.session_state.user_email = None
+if 'admin_auth' not in st.session_state: st.session_state.admin_auth = False
 
 # --- SIDEBAR ---
 with st.sidebar:
     if st.button("🏠 HOME / PORTAL", width='stretch'):
-        st.session_state.user_email = None; st.rerun()
+        st.session_state.user_email = None
+        st.session_state.admin_auth = False
+        st.rerun()
     st.divider()
+    
     db_conn = sqlite3.connect('sistema.db')
     empresas = [r[0] for r in db_conn.execute("SELECT nome FROM empresas").fetchall()]
     db_conn.close()
+    
     emp_filtro = st.selectbox("Empresa", ["Todas"] + empresas)
     data_filtro = st.date_input("Data", datetime.now())
     menu = st.radio("Menu:", ["Reserva de Turnos", "Área de Cliente", "Criar Conta"])
+    
     st.divider()
-    admin_check = st.checkbox("⚙️ Admin Mode")
-    if admin_check:
-        pwd = st.text_input("Senha", type="password")
-        st.session_state.admin_auth = (pwd == ADMIN_PASSWORD)
+    st.subheader("⚙️ Acesso Admin")
+    with st.form("admin_login_form"):
+        pwd = st.text_input("Senha de Administrador", type="password")
+        if st.form_submit_button("🔓 Entrar no Modo Admin"):
+            if pwd == ADMIN_PASSWORD:
+                st.session_state.admin_auth = True
+                st.success("Acesso autorizado!")
+                st.rerun()
+            else:
+                st.session_state.admin_auth = False
+                st.error("Senha incorreta.")
 
-# --- MODO ADMIN ---
-if admin_check and st.session_state.get('admin_auth', False):
-    st.header("🛠️ Administração")
-    t1, t2 = st.tabs(["Gerar Postos", "Inscrições"])
-
-    with t2:
-        conn = sqlite3.connect('sistema.db')
-        inscritos = conn.execute("SELECT posto, nome, status, telefone, email, pref_email, pref_sms FROM escalas").fetchall()
-        for p, n, s, tel, mail, p_m, p_s in inscritos:
-            with st.expander(f"{'✅' if s == 'Confirmado' else '⏳'} {n} - {p}"):
-                st.write(f"Preferências: {'Email ' if p_m else ''}{'SMS' if p_s else ''}")
-                if s == 'Pendente' and st.button("Confirmar e Notificar", key=f"adm_{p}"):
-                    conn.execute("UPDATE escalas SET status='Confirmado' WHERE posto=?", (p,))
-                    conn.commit()
-                    enviar_notificacao_filtrada(mail, tel, n, p, p_m, p_s)
-                    st.success("Confirmado conforme preferências."); st.rerun()
-        conn.close()
+# --- INTERFACE ADMIN ---
+if st.session_state.admin_auth:
+    st.header("🛠️ Painel de Administração")
+    t1, t2, t3, t4 = st.tabs(["Gerar Postos", "Inscrições", "Empresas", "Sistema"])
 
     with t1:
-        nova_emp = st.text_input("Empresa")
-        local_geo = st.text_input("Localização")
-        txt_bruto = st.text_area("Texto Bruto")
-        if st.button("Gerar"):
+        nova_emp_gen = st.text_input("Empresa:")
+        local_geo = st.text_input("Localização (Morada):")
+        txt_bruto = st.text_area("Texto dos Turnos:", height=150)
+        if st.button("🚀 Criar Postos"):
             conn = sqlite3.connect('sistema.db')
-            conn.execute("INSERT OR IGNORE INTO empresas VALUES (?)", (nova_emp.strip(),))
+            conn.execute("INSERT OR IGNORE INTO empresas VALUES (?)", (nova_emp_gen.strip(),))
             local_f = "Geral"
             for l in txt_bruto.split('\n'):
                 l = l.strip()
@@ -107,14 +106,34 @@ if admin_check and st.session_state.get('admin_auth', False):
                 if l.isupper() and len(l) > 3 and not re.search(r"\d+h", l): local_f = l
                 else:
                     p_id = f"{local_f} | {l} ({data_filtro.strftime('%d/%m')})"
-                    conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?,?)", (p_id, nova_emp.strip(), data_filtro.strftime('%Y-%m-%d'), local_geo))
+                    conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?,?)", 
+                                 (p_id, nova_emp_gen.strip(), data_filtro.strftime('%Y-%m-%d'), local_geo))
             conn.commit(); conn.close(); st.rerun()
 
-# --- RESERVA DE TURNOS ---
+    with t2:
+        conn = sqlite3.connect('sistema.db')
+        df_i = pd.read_sql_query("SELECT * FROM escalas", conn)
+        for _, row in df_i.iterrows():
+            with st.expander(f"{'✅' if row['status'] == 'Confirmado' else '⏳'} {row['nome']} - {row['posto']}"):
+                st.write(f"Preferências: Email={row['pref_email']}, SMS={row['pref_sms']}")
+                if row['status'] == 'Pendente' and st.button("Confirmar e Notificar", key=f"adm_conf_{row['posto']}"):
+                    conn.execute("UPDATE escalas SET status='Confirmado' WHERE posto=?", (row['posto'],))
+                    conn.commit()
+                    enviar_notificacao_filtrada(row['email'], row['telefone'], row['nome'], row['posto'], row['pref_email'], row['pref_sms'])
+                    st.rerun()
+                if st.button("Eliminar", key=f"adm_del_{row['posto']}"):
+                    conn.execute("DELETE FROM escalas WHERE posto=?", (row['posto'],))
+                    conn.commit(); st.rerun()
+        conn.close()
+
+# --- INTERFACE UTILIZADOR ---
 elif menu == "Reserva de Turnos":
-    st.title("📅 Reserva")
+    st.title("📅 Turnos")
     conn = sqlite3.connect('sistema.db')
-    postos = conn.execute("SELECT posto, localizacao FROM configuracao_turnos WHERE data=?", (data_filtro.strftime('%Y-%m-%d'),)).fetchall()
+    query = "SELECT posto, localizacao FROM configuracao_turnos WHERE data=?"
+    params = [data_filtro.strftime('%Y-%m-%d')]
+    if emp_filtro != "Todas": query += " AND empresa=?"; params.append(emp_filtro)
+    postos = conn.execute(query, params).fetchall()
     ocupados = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
     conn.close()
 
@@ -128,38 +147,35 @@ elif menu == "Reserva de Turnos":
                     st.success(f"✅ {p}")
                     if st.session_state.user_email:
                         with st.popover("Reservar"):
-                            m_ok = st.checkbox("Notificar por Email", key=f"m_{p}")
-                            s_ok = st.checkbox("Notificar por SMS", key=f"s_{p}")
-                            if st.button("Confirmar", key=f"btn_{p}"):
+                            e_not = st.checkbox("Email", key=f"en_{p}")
+                            s_not = st.checkbox("SMS", key=f"sn_{p}")
+                            if st.button("Confirmar", key=f"c_res_{p}"):
                                 conn = sqlite3.connect('sistema.db')
                                 u = conn.execute("SELECT nome, telefone, email FROM clientes WHERE email=?", (st.session_state.user_email,)).fetchone()
-                                conn.execute("INSERT INTO escalas VALUES (?,?,?,?,?,?,?,?)", (p, u[0], u[1], u[2], data_filtro.strftime('%Y-%m-%d'), 'Pendente', int(m_ok), int(s_ok)))
+                                conn.execute("INSERT INTO escalas VALUES (?,?,?,?,?,?,?,?)", (p, u[0], u[1], u[2], data_filtro.strftime('%Y-%m-%d'), 'Pendente', int(e_not), int(s_not)))
                                 conn.commit(); conn.close(); st.rerun()
 
-# --- OUTROS MENUS ---
 elif menu == "Criar Conta":
-    with st.form("reg"):
+    with st.form("reg_v14"):
         n, e, t, s = st.text_input("Nome"), st.text_input("Email"), st.text_input("Tel"), st.text_input("Senha", type="password")
         if st.form_submit_button("Criar"):
             conn = sqlite3.connect('sistema.db')
-            conn.execute("INSERT INTO clientes VALUES (?,?,?,?,?,?,?)", (e, s, n, t, "Sim", "Sim", ""))
+            conn.execute("INSERT INTO clientes VALUES (?,?,?,?,?,?,?)", (e, s, n, t, "Sim", "Sim", "VIG"))
             conn.commit(); conn.close(); st.session_state.user_email = e; st.rerun()
 
 elif menu == "Área de Cliente":
     if st.session_state.user_email:
         conn = sqlite3.connect('sistema.db')
-        user = conn.execute("SELECT nome FROM clientes WHERE email=?", (st.session_state.user_email,)).fetchone()
-        st.subheader(f"Olá {user[0]}")
         res = conn.execute("SELECT posto, status FROM escalas WHERE email=?", (st.session_state.user_email,)).fetchall()
         for p, s in res:
             st.info(f"📍 {p} | Status: {s}")
-            if st.button("Desistir", key=f"c_{p}"):
+            if st.button("Desistir", key=f"cl_del_{p}"):
                 conn.execute("DELETE FROM escalas WHERE posto=?", (p,)); conn.commit(); st.rerun()
-        if st.button("Sair"): st.session_state.user_email = None; st.rerun()
+        if st.button("Logout"): st.session_state.user_email = None; st.rerun()
         conn.close()
     else:
         e, s = st.text_input("Email"), st.text_input("Senha", type="password")
-        if st.button("Entrar"):
+        if st.button("Login"):
             conn = sqlite3.connect('sistema.db')
             if conn.execute("SELECT email FROM clientes WHERE email=? AND senha=?", (e, s)).fetchone():
                 st.session_state.user_email = e; st.rerun()
