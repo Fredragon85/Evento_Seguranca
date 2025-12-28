@@ -15,9 +15,9 @@ EMAIL_PASS = "*.*Fr3d5ilv488"
 TWILIO_ACCOUNT_SID = 'AC0c0da7648d2ad34f5c2df4253e371910'
 TWILIO_AUTH_TOKEN = 'a83cb0baf2dce52ba061171d3f69a9f9'
 TWILIO_NUMBER = "+12402930627"
-TWILIO_WHATSAPP = "whatsapp:+14155238886"
+TWILIO_WHATSAPP = "whatsapp:+351939227659"
 TELEGRAM_BOT_TOKEN = "7950949216:AAHTmB8Z5UfV_B7oE8eH-m2U_Y_f6Z3w2kU"
-TELEGRAM_CHAT_ID = "@sua_canal_seguranca"
+TELEGRAM_CHAT_ID = "@FredSilva85_pt"
 
 # --- DATABASE ENGINE ---
 def init_db(force_reset=False):
@@ -226,3 +226,4 @@ elif nav == "Registo":
             conn = sqlite3.connect('sistema_v45_supreme.db')
             conn.execute("INSERT OR REPLACE INTO clientes VALUES (?,?,?,?,?,?,?,?,?)", (e, s, n, t, "Sim", "Sim", ",".join(cart), 5, None))
             conn.commit(); conn.close(); st.session_state.user_email = e; st.rerun()
+
