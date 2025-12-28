@@ -107,4 +107,5 @@ with st.expander("🔐 Gestão de Administrador"):
                     conn.close()
                     st.rerun()
         else:
+
             st.info("Nenhum turno preenchido até ao momento.")
