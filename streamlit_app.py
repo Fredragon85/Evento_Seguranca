@@ -20,7 +20,7 @@ TWILIO_WHATSAPP = "whatsapp:+3519339227659"
 TELEGRAM_TOKEN = "7950949216:AAHTmB8Z5UfV_B7oE8eH-m2U_Y_f6Z3w2kU"
 TELEGRAM_CHAT = "@Dragonblack85"
 
-MEU_WA_LINK = "https://wa.me/3519339227659"
+MEU_WA_LINK = "https://wa.me/+3519339227659"
 MEU_TG_LINK = "https://t.me/Dragonblack85"
 DB_NAME = 'sistema_v59_supreme.db'
 
@@ -209,4 +209,5 @@ elif nav == "Registo":
             with get_db_conn() as conn:
                 conn.execute("INSERT OR REPLACE INTO clientes (email, senha, nome, telefone) VALUES (?,?,?,?)", (e, hashed, n, t))
             st.success("Registado!"); time.sleep(1); st.rerun()
+
 
