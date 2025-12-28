@@ -16,7 +16,7 @@ EMAIL_PASS = "*.*Fr3d5ilv488"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-# Twilio (Opcional - Deixar em branco se não quiser usar)
+# Twilio (Alerta Admin)
 TWILIO_ACCOUNT_SID = 'AC0c0da7648d2ad34f5c2df4253e371910'
 TWILIO_AUTH_TOKEN = 'a83cb0baf2dce52ba061171d3f69a9f9'
 TWILIO_NUMBER = "+12402930627"
@@ -41,21 +41,18 @@ def enviar_confirmacao_email(destinatario, nome, posto):
             server.starttls()
             server.login(EMAIL_USER, EMAIL_PASS)
             server.send_message(msg)
-        return True
-    except Exception as e:
-        st.error(f"Erro ao enviar email: {e}")
-        return False
+    except: pass
 
 def alerta_admin_sms(mensagem):
-    if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
-        try:
-            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            client.messages.create(body=mensagem, from_=TWILIO_NUMBER, to=ADMIN_PHONE)
-        except: pass
+    try:
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        client.messages.create(body=mensagem, from_=TWILIO_NUMBER, to=ADMIN_PHONE)
+    except: pass
 
 st.set_page_config(page_title="Gestão de Eventos", layout="wide")
 init_db()
 
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("⚙️ Painel")
     modo_admin = st.toggle("Modo Administrador")
@@ -95,7 +92,7 @@ if modo_admin:
             conn.close()
             for p, n, t, e in registos:
                 c1, c2 = st.columns([4, 1])
-                c1.write(f"📍 **{p}** | 👤 {n}")
+                c1.write(f"📍 **{p}** | 👤 {n} ({t})")
                 if c2.button("Eliminar", key=f"del_{p}"):
                     conn = sqlite3.connect('turnos.db')
                     conn.execute("DELETE FROM escalas WHERE posto = ?", (p,))
@@ -118,42 +115,49 @@ st.title("🎆 Reserva de Turnos")
 
 conn = sqlite3.connect('turnos.db')
 postos_db = [r[0] for r in conn.execute("SELECT posto FROM configuracao_turnos").fetchall()]
-ocupados = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
+dados_escalas = conn.execute("SELECT posto, nome, telefone FROM escalas").fetchall()
+ocupados = {r[0]: r[1] for r in dados_escalas}
+nomes_registados = [r[1].upper() for r in dados_escalas]
+telefones_registados = [r[2] for r in dados_escalas]
 conn.close()
 
 if postos_db:
     with st.form("registo_oficial"):
         c1, c2 = st.columns(2)
-        nome_f = c1.text_input("Nome Completo")
-        tel_f = c1.text_input("Telemóvel")
-        email_f = c2.text_input("E-mail para Confirmação")
+        nome_f = c1.text_input("Nome Completo").strip()
+        tel_f = c1.text_input("Telemóvel").strip()
+        email_f = c2.text_input("E-mail para Confirmação").strip()
         escolha_f = c2.selectbox("Selecione o Turno", postos_db)
-        
         btn_confirmar = st.form_submit_button("Confirmar Marcação")
 
     if btn_confirmar:
         if not (nome_f and tel_f and email_f):
-            st.error("Por favor, preencha todos os campos.")
+            st.error("Preencha todos os campos.")
+        elif nome_f.upper() in nomes_registados or tel_f in telefones_registados:
+            st.warning(f"Atenção: O utilizador {nome_f} ou o telemóvel {tel_f} já possui um turno atribuído. Só é permitida uma inscrição por pessoa.")
         elif escolha_f in ocupados:
             st.error("Este turno já foi reservado.")
         else:
             try:
-                # 1. Gravar na Base de Dados
                 conn = sqlite3.connect('turnos.db')
                 conn.execute("INSERT INTO escalas VALUES (?,?,?,?)", (escolha_f, nome_f, tel_f, email_f))
                 conn.commit()
                 conn.close()
-                
-                # 2. Enviar E-mail (Prioridade)
                 enviar_confirmacao_email(email_f, nome_f, escolha_f)
-                
-                # 3. Alerta Admin (SMS Opcional)
-                alerta_admin_sms(f"Novo Registo: {nome_f} - {escolha_f}")
-
-                st.success(f"Garantido! Verifique o e-mail: {email_f}")
+                alerta_admin_sms(f"Novo: {nome_f} - {escolha_f}")
+                st.success("Confirmado! Verifique o seu e-mail.")
                 st.balloons()
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
 
-    st
+    st.divider()
+    col_a, col_b = st.columns(2)
+    for i, p in enumerate(postos_db):
+        target = col_a if i % 2 == 0 else col_b
+        if p in ocupados:
+            target.error(f"❌ {p} (Ocupado: {ocupados[p]})")
+        else:
+            target.success(f"✅ {p}")
+else:
+    st.warning("Aguarde a configuração dos postos.")
