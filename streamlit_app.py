@@ -1,21 +1,20 @@
-import streamlit as st
+iimport streamlit as st
 import sqlite3
 import pandas as pd
 import smtplib
 import requests
 import logging
+import bcrypt  # Usaremos bcrypt puro para compatibilidade com Python 3.13
 from email.mime.text import MIMEText
 from twilio.rest import Client
 from math import sin, cos, sqrt, atan2, radians
 from contextlib import closing
-from passlib.hash import bcrypt
 
 # --- CONFIGURAÇÃO DE LOGGING ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURAÇÕES MESTRE (RECOMENDADO: USAR st.secrets) ---
-# Se estiveres a usar o Streamlit Cloud, coloca estas variáveis no painel "Secrets"
+# --- CONFIGURAÇÕES MESTRE ---
 ADMIN_PASS_SISTEMA = "ADMIN"
 EMAIL_USER = "silvafrederico280385@gmail.com"
 EMAIL_PASS = "*.*Fr3d5ilv488" 
@@ -29,9 +28,20 @@ TELEGRAM_CHAT = "@FredSilva85_pt"
 MEU_WA_LINK = "https://wa.me/3519339227659"
 MEU_TG_LINK = "https://t.me/FredSilva85_pt"
 
-DB_NAME = 'sistema_v54_supreme.db'
+DB_NAME = 'sistema_v56_supreme.db'
 
-# --- DATABASE ENGINE (CONTEXT MANAGERS) ---
+# --- FUNÇÕES DE SEGURANÇA (BCRYPT PURO) ---
+def hash_password(password):
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt)
+
+def check_password(password, hashed):
+    # O hashed vindo da DB costuma ser string, precisamos converter para bytes
+    if isinstance(hashed, str):
+        hashed = hashed.encode('utf-8')
+    return bcrypt.checkpw(password.encode('utf-8'), hashed)
+
+# --- DATABASE ENGINE ---
 def get_db_conn():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
@@ -58,10 +68,10 @@ def init_db(force_reset=False):
             c.execute('''CREATE TABLE IF NOT EXISTS logs_notificacoes 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, tipo TEXT, mensagem TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
             
-            # Conta Master Admin/Colaborador (com password em Hash)
-            admin_hash = bcrypt.hash("ADMIN")
+            # Conta Master Admin com Hash Seguro
+            admin_pwd_hash = hash_password("ADMIN").decode('utf-8')
             c.execute("INSERT OR REPLACE INTO clientes (email, senha, nome, telefone, carta, viatura, cartoes, ranking) VALUES (?,?,?,?,?,?,?,?)",
-                      ("admin@admin.pt", admin_hash, "FRED SILVA ADMIN", "+3519339227659", "Sim", "Sim", "VIG,ARE,ARD,COORDENADOR", 5))
+                      ("admin@admin.pt", admin_pwd_hash, "FRED SILVA ADMIN", "+3519339227659", "Sim", "Sim", "VIG,ARE,ARD,COORDENADOR", 5))
 
 def log_notif(email, tipo, msg):
     with get_db_conn() as conn:
@@ -76,7 +86,6 @@ def haversine_meters(lat1, lon1, lat2, lon2):
 
 def multicanal_notify(email, tel, nome, posto, acao="CONFIRMADO"):
     msg = f"Ola {nome}, o seu turno {posto} foi {acao}."
-    # Email
     try:
         m = MIMEText(msg); m['Subject'] = acao; m['From'] = EMAIL_USER; m['To'] = email
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as s:
@@ -85,7 +94,6 @@ def multicanal_notify(email, tel, nome, posto, acao="CONFIRMADO"):
     except Exception as e:
         log_notif(email, "EMAIL", f"Erro: {str(e)}")
     
-    # Twilio WhatsApp
     try:
         client = Client(TWILIO_SID, TWILIO_TOKEN)
         client.messages.create(from_=TWILIO_WHATSAPP, body=msg, to=f"whatsapp:{tel}")
@@ -93,15 +101,13 @@ def multicanal_notify(email, tel, nome, posto, acao="CONFIRMADO"):
     except Exception as e:
         log_notif(email, "WHATSAPP", f"Erro: {str(e)}")
     
-    # Telegram
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT, "text": f"📢 {acao}: {nome} em {posto}"}, timeout=5)
-    except Exception as e:
-        logger.error(f"Telegram erro: {e}")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                      data={"chat_id": TELEGRAM_CHAT, "text": f"📢 {acao}: {nome} em {posto}"}, timeout=5)
+    except: pass
 
 # --- INTERFACE ---
-st.set_page_config(page_title="V54 SUPREME OMNI", layout="wide")
+st.set_page_config(page_title="V56 SUPREME OMNI", layout="wide")
 init_db()
 
 if 'admin_auth' not in st.session_state: st.session_state.admin_auth = False
@@ -110,7 +116,7 @@ if 'preview_data' not in st.session_state: st.session_state.preview_data = []
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("🛡️ SUPREME v54")
+    st.title("🛡️ SUPREME v56")
     if st.session_state.admin_auth:
         st.success("ADMIN: FRED SILVA")
         if st.button("🔒 LOGOUT ADMIN"): st.session_state.admin_auth = False; st.rerun()
@@ -122,7 +128,6 @@ with st.sidebar:
     
     st.divider()
     nav = st.radio("Módulos", ["Turnos em Aberto", "Área de Cliente", "Registo"])
-    
     st.divider()
     st.write("🆘 SUPORTE TÉCNICO")
     st.link_button("💬 WhatsApp Admin", MEU_WA_LINK, use_container_width=True)
@@ -133,7 +138,7 @@ if st.session_state.admin_auth:
     t1, t2, t3, t4, t5 = st.tabs(["🚀 Gerador", "👥 Staff Info", "📥 Inscrições", "📋 Postos Ativos", "⚙️ Sistema"])
     
     with t1:
-        txt = st.text_area("Texto Bruto para Processamento", height=150)
+        txt = st.text_area("Texto Bruto", height=150)
         if st.button("🔍 GERAR PREVISUALIZAÇÃO"):
             if txt:
                 p_list = []
@@ -161,8 +166,6 @@ if st.session_state.admin_auth:
             for e, n, t, r in staff:
                 with st.expander(f"👤 {n} ({e})"):
                     st.write(f"Ranking: {'⭐'*r}")
-                    logs = conn.execute("SELECT tipo, mensagem, timestamp FROM logs_notificacoes WHERE email=? ORDER BY timestamp DESC LIMIT 3", (e,)).fetchall()
-                    for lt, lm, lts in logs: st.caption(f"{lts} | {lt}: {lm}")
                     if st.button(f"Remover {n}", key=f"del_{e}"):
                         conn.execute("DELETE FROM clientes WHERE email=?"); st.rerun()
 
@@ -172,7 +175,7 @@ if st.session_state.admin_auth:
             for r in insc:
                 with st.container(border=True):
                     st.write(f"**{r[2]}** quer: `{r[1]}`")
-                    if st.button("✅ Confirmar & Notificar", key=f"v_{r[0]}"):
+                    if st.button("✅ Confirmar", key=f"v_{r[0]}"):
                         conn.execute("UPDATE escalas SET status='Confirmado' WHERE id=?", (r[0],))
                         multicanal_notify(r[4], r[3], r[2], r[1])
                         st.rerun()
@@ -185,9 +188,8 @@ elif nav == "Área de Cliente":
     if st.session_state.user_email:
         with get_db_conn() as conn:
             u = conn.execute("SELECT nome FROM clientes WHERE email=?", (st.session_state.user_email,)).fetchone()
-            st.subheader(f"Área Pessoal: {u[0]}")
+            st.subheader(f"Olá, {u[0]}")
             
-            # Query corrigida para evitar crash
             meus = conn.execute('''
                 SELECT e.posto, t.lat, t.lon, e.checkin 
                 FROM escalas e 
@@ -198,7 +200,7 @@ elif nav == "Área de Cliente":
             for p, lat, lon, chk in meus:
                 with st.container(border=True):
                     st.write(f"📍 {p}")
-                    if chk: st.success("✅ Presença Confirmada")
+                    if chk: st.success("✅ Check-in Efetuado")
                     else:
                         if st.button(f"Fazer Check-in GPS: {p}"):
                             if haversine_meters(39.2081, -8.6277, lat, lon) <= 500:
@@ -213,7 +215,7 @@ elif nav == "Área de Cliente":
             if st.form_submit_button("Entrar"):
                 with get_db_conn() as conn:
                     res = conn.execute("SELECT senha FROM clientes WHERE email=?", (e,)).fetchone()
-                    if res and bcrypt.verify(s, res[0]):
+                    if res and check_password(s, res[0]):
                         st.session_state.user_email = e; st.rerun()
                     else: st.error("Incorreto.")
 
@@ -238,7 +240,7 @@ elif nav == "Registo":
     with st.form("r"):
         n, e, t, s = st.text_input("Nome"), st.text_input("Email"), st.text_input("Tel"), st.text_input("Senha", type="password")
         if st.form_submit_button("Criar / Atualizar Conta"):
-            hashed = bcrypt.hash(s)
+            hashed = hash_password(s).decode('utf-8')
             with get_db_conn() as conn:
                 conn.execute("INSERT OR REPLACE INTO clientes (email, senha, nome, telefone, carta, viatura, cartoes) VALUES (?,?,?,?,?,?,?)", 
                              (e, hashed, n, t, "Sim", "Sim", "VIG"))
