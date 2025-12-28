@@ -207,7 +207,7 @@ elif menu == "Criar Conta":
         col1, col2 = st.columns(2)
         carta = col1.selectbox("Carta Condução", ["Sim", "Não"])
         viatura = col2.selectbox("Viatura Própria", ["Sim", "Não"])
-        cartoes = st.multiselect("Cartões Profissionais", ["VIG", "ARE", "ADIR", "MARE"])
+        cartoes = st.multiselect("Cartões Profissionais", ["VIG", "ARE", "ARD", "SPR"])
         doc = st.file_uploader("Upload do Cartão (Imagem)", type=['png', 'jpg'])
         if st.form_submit_button("Finalizar Registo"):
             conn = sqlite3.connect('sistema_mestre.db')
@@ -217,3 +217,4 @@ elif menu == "Criar Conta":
                 conn.commit(); st.session_state.user_email = e; st.rerun()
             except: st.error("Erro: Email já registado.")
             finally: conn.close()
+
