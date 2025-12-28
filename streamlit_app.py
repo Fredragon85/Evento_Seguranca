@@ -54,7 +54,7 @@ def enviar_sms(num, msg):
     except:
         return False
 
-st.set_page_config(page_title="Gestão de Segurança v4.0", layout="wide")
+st.set_page_config(page_title="Gestão de Segurança v4.1", layout="wide")
 init_db()
 
 st.markdown(f"""<style>.stApp {{ background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url("{BG_IMG}"); background-size: cover; }}</style>""", unsafe_allow_html=True)
@@ -84,9 +84,8 @@ if admin_check and st.session_state.get('admin_auth', False):
     t1, t2, t3 = st.tabs(["Estatísticas", "Gerar Postos", "Empresas"])
 
     with t3:
-        st.subheader("Gestão de Empresas")
         n_emp = st.text_input("Nova Empresa")
-        if st.button("Adicionar"):
+        if st.button("Adicionar Empresa"):
             conn = sqlite3.connect('sistema.db')
             conn.execute("INSERT OR IGNORE INTO empresas VALUES (?)", (n_emp.strip(),))
             conn.commit()
@@ -95,7 +94,7 @@ if admin_check and st.session_state.get('admin_auth', False):
         
         if empresas:
             rem_emp = st.selectbox("Remover Empresa:", empresas)
-            if st.button("Eliminar Empresa e Turnos"):
+            if st.button("Eliminar"):
                 conn = sqlite3.connect('sistema.db')
                 conn.execute("DELETE FROM empresas WHERE nome=?", (rem_emp,))
                 conn.execute("DELETE FROM configuracao_turnos WHERE empresa=?", (rem_emp,))
@@ -105,51 +104,18 @@ if admin_check and st.session_state.get('admin_auth', False):
 
     with t2:
         if not empresas:
-            st.warning("Crie uma empresa na aba 'Empresas' primeiro.")
+            st.warning("Crie uma empresa primeiro.")
         else:
             alvo_emp = st.selectbox("Atribuir a:", empresas)
-            alvo_dat = st.date_input("Data do Evento:", datetime.now(), key="admin_date_input")
-            texto_bruto = st.text_area("Cole o texto aqui:", height=250)
-            
-            if st.button("🚀 Gerar Turnos Agora"):
-                linhas = texto_bruto.split('\n')
+            alvo_dat = st.date_input("Data do Evento:", datetime.now(), key="admin_date_gen")
+            txt_bruto = st.text_area("Texto Bruto:", height=200)
+            if st.button("🚀 Gerar Turnos"):
+                linhas = txt_bruto.split('\n')
                 local_f = "Posto"
-                criados = 0
-                conn = sqlite3.connect('sistema.db') # Conecta uma vez antes do loop
+                conn = sqlite3.connect('sistema.db')
                 for l in linhas:
                     l = l.strip()
-                    if not l or any(x in l.upper() for x in ["FOGO", "PSG-REAL"]): continue
-                    
-                    tem_horario = re.search(r"\d+h", l, re.IGNORECASE)
-                    
-                    if l.isupper() and len(l) > 3 and not tem_horario:
-                        local_f = l
-                    else:
-                        p_id = f"{local_f} | {l} ({alvo_dat.strftime('%d/%m')})"
-                        conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?)", 
-                                     (p_id, alvo_emp, alvo_dat.strftime('%Y-%m-%d')))
-                        criados += 1
-                conn.commit()
-                conn.close()
-                st.success(f"Concluído! {criados} turnos processados.")
-                st.rerun()
-
-    with t1:
-        conn = sqlite3.connect('sistema.db')
-        df_p = pd.read_sql_query("SELECT * FROM configuracao_turnos", conn)
-        df_e = pd.read_sql_query("SELECT * FROM escalas", conn)
-        conn.close()
-        if not df_p.empty:
-            df_m = pd.merge(df_p, df_e, on="posto", how="left")
-            df_m['Status'] = df_m['nome'].apply(lambda x: 'Ocupado' if pd.notnull(x) else 'Livre')
-            fig = px.bar(df_m, x="empresa", color="Status", barmode="group",
-                         color_discrete_map={'Livre':'#2ecc71', 'Ocupado':'#e74c3c'}, template="plotly_dark")
-            st.plotly_chart(fig, use_container_width=True)
-            
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as wr:
-                df_m.to_excel(wr, index=False)
-            st.download_button("📥 Relatório Excel", output.getvalue(), "estatisticas.xlsx")
+                    if not l or any(x in l.upper() for x in ["FOGO", "PSG
 
 # --- INTERFACE UTILIZADOR ---
 elif menu == "Reserva de Turnos":
@@ -183,3 +149,4 @@ elif menu == "Reserva de Turnos":
                     conn = sqlite3.connect('sistema.db')
                     conn.execute("INSERT INTO escalas VALUES (?,?,?,?,?)", 
                                  (u_escolha,
+
