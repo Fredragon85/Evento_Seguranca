@@ -5,7 +5,8 @@ import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 from twilio.rest import Client
-from io import BytesIO
+from datetime import datetime
+import plotly.express as px
 
 # --- CONFIGURAÇÕES ---
 ADMIN_PASSWORD = "ADMIN"
@@ -20,110 +21,116 @@ ADMIN_PHONE = "+351939227659"
 
 BG_IMG = "https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?auto=format&fit=crop&q=80&w=1920"
 
-# --- DATABASE ---
 def init_db():
     conn = sqlite3.connect('sistema.db', check_same_thread=False)
     c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS escalas (posto TEXT PRIMARY KEY, nome TEXT, telefone TEXT, email TEXT)')
-    c.execute('CREATE TABLE IF NOT EXISTS configuracao_turnos (posto TEXT PRIMARY KEY)')
-    c.execute('CREATE TABLE IF NOT EXISTS clientes (email TEXT PRIMARY KEY, senha TEXT, nome TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS escalas (posto TEXT PRIMARY KEY, nome TEXT, telefone TEXT, email TEXT, data TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS configuracao_turnos (posto TEXT PRIMARY KEY, empresa TEXT, data TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS empresas (nome TEXT PRIMARY KEY)')
+    c.execute('CREATE TABLE IF NOT EXISTS clientes (email TEXT PRIMARY KEY, senha TEXT, nome TEXT, telefone TEXT)')
     conn.commit()
     conn.close()
 
-def enviar_email(dest, nome, posto, teste=False):
-    assunto = "Teste de Configuração de E-mail" if teste else "Confirmação de Turno"
-    corpo = f"Olá {nome}, este é um e-mail de teste." if teste else f"Olá {nome}, o seu turno foi confirmado: {posto}"
+def enviar_email(dest, assunto, corpo):
     try:
-        msg = MIMEText(corpo)
-        msg['Subject'] = assunto
-        msg['From'] = EMAIL_USER
-        msg['To'] = dest
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.send_message(msg)
+        msg = MIMEText(corpo); msg['Subject'] = assunto; msg['From'] = EMAIL_USER; msg['To'] = dest
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+            s.starttls(); s.login(EMAIL_USER, EMAIL_PASS); s.send_message(msg)
         return True
-    except Exception as e:
-        st.error(f"Erro SMTP: {e}")
-        return False
+    except: return False
 
-def enviar_sms(numero, mensagem):
+def enviar_sms(num, msg):
     try:
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        client.messages.create(body=mensagem, from_=TWILIO_NUMBER, to=numero)
-    except: pass
+        c = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        c.messages.create(body=msg, from_=TWILIO_NUMBER, to=num)
+        return True
+    except: return False
 
-st.set_page_config(page_title="Gestão de Segurança", layout="wide")
+st.set_page_config(page_title="Gestão de Segurança v3.1", layout="wide")
 init_db()
 
-# --- CSS BACKGROUND ---
-st.markdown(f"""
-    <style>
-    .stApp {{ background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url("{BG_IMG}"); background-size: cover; }}
-    .admin-btn {{ position: fixed; bottom: 10px; right: 10px; opacity: 0.1; cursor: pointer; font-size: 20px; z-index: 1000; }}
-    </style>
-""", unsafe_allow_html=True)
+st.markdown(f"""<style>.stApp {{ background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), url("{BG_IMG}"); background-size: cover; }}</style>""", unsafe_allow_html=True)
 
-# --- NAVEGAÇÃO ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("🛡️ Portal")
-    menu = st.radio("Ir para:", ["Reserva de Turnos", "Área de Cliente", "Criar Conta"])
-    st.divider()
-    if st.markdown('<div class="admin-btn">🔒</div>', unsafe_allow_html=True):
-        if st.button("Painel Admin"):
-            st.session_state.admin_mode = not st.session_state.get('admin_mode', False)
-
-# --- MODO ADMIN ---
-if st.session_state.get('admin_mode', False):
-    st.header("🛠️ Administração")
-    pwd = st.text_input("Senha Admin", type="password")
-    if pwd == ADMIN_PASSWORD:
-        t1, t2, t3 = st.tabs(["Gerar Turnos", "Gestão Inscrições", "Ferramentas"])
-        
-        with t1:
-            st.subheader("Processar Texto Bruto")
-            txt = st.text_area("Cole o texto aqui:", height=200)
-            col_a, col_b = st.columns(2)
-            if col_a.button("Gerar Turnos"):
-                linhas = txt.split('\n')
-                loc, dat = "", ""
-                for l in linhas:
-                    l = l.strip()
-                    if not l or any(x in l.upper() for x in ["FOGO", "PSG"]): continue
-                    if l.isupper() and len(l) > 3 and "DIA" not in l: loc = l
-                    dm = re.search(r"(DIA \d+|\b\d{2}\b)", l, re.IGNORECASE)
-                    if dm and not re.search(r"\d+h", l): dat = dm.group(1).upper()
-                    hm = re.search(r"(Das \d{1,2}h as \d{1,2}h.*)", l, re.IGNORECASE)
-                    if hm and loc:
-                        p_fin = f"{loc} ({dat}) | {hm.group(1)}"
-                        conn = sqlite3.connect('sistema.db')
-                        conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?)", (p_fin,))
-                        conn.commit(); conn.close()
-                st.rerun()
-            
-            if col_b.button("🗑️ Limpar Todos os Postos"):
-                conn = sqlite3.connect('sistema.db')
-                conn.execute("DELETE FROM configuracao_turnos")
-                conn.execute("DELETE FROM escalas")
-                conn.commit(); conn.close()
-                st.warning("Sistema reiniciado.")
-                st.rerun()
-
-        with t3:
-            st.subheader("Teste de Comunicações")
-            if st.button("📧 Enviar E-mail de Teste"):
-                if enviar_email(EMAIL_USER, "Admin", "Teste", teste=True):
-                    st.success(f"E-mail enviado para {EMAIL_USER}")
-
-# --- RESERVA DE TURNOS ---
-if menu == "Reserva de Turnos":
-    st.title("🎆 Reserva de Turnos")
     conn = sqlite3.connect('sistema.db')
-    postos = [r[0] for r in conn.execute("SELECT posto FROM configuracao_turnos").fetchall()]
-    dados = conn.execute("SELECT posto, nome, telefone FROM escalas").fetchall()
-    ocupados = {r[0]: r[1] for r in dados}
-    reg_nome = [r[1].upper() for r in dados]
-    reg_tel = [r[2] for r in dados]
+    empresas = [r[0] for r in conn.execute("SELECT nome FROM empresas").fetchall()]
+    conn.close()
+    
+    empresa_filtro = st.selectbox("Empresa", ["Todas"] + empresas)
+    data_filtro = st.date_input("Data", datetime.now())
+    menu = st.radio("Menu:", ["Reserva de Turnos", "Área de Cliente", "Criar Conta"])
+    
+    st.divider()
+    if st.checkbox("⚙️ Admin Mode"):
+        pwd = st.text_input("Senha", type="password")
+        if pwd == ADMIN_PASSWORD: st.session_state.admin_auth = True
+        else: st.session_state.admin_auth = False
+
+# --- PAINEL ESTATÍSTICO E ADMIN ---
+if st.session_state.get('admin_auth', False):
+    st.header("📊 Dashboard Administrativo")
+    t1, t2, t3 = st.tabs(["Estatísticas", "Gerar Postos", "Empresas"])
+    
+    conn = sqlite3.connect('sistema.db')
+    df_postos = pd.read_sql_query("SELECT * FROM configuracao_turnos", conn)
+    df_escalas = pd.read_sql_query("SELECT * FROM escalas", conn)
+    conn.close()
+
+    with t1:
+        if not df_postos.empty:
+            df_merged = pd.merge(df_postos, df_escalas, on="posto", how="left")
+            df_merged['Status'] = df_merged['nome'].apply(lambda x: 'Ocupado' if pd.notnull(x) else 'Livre')
+            fig = px.histogram(df_merged, x="empresa", color="Status", barmode="group", 
+                               title="Ocupação de Turnos por Empresa", color_discrete_map={'Livre':'green', 'Ocupado':'red'})
+            st.plotly_chart(fig, use_container_width=True)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total de Postos", len(df_postos))
+            c2.metric("Ocupados", len(df_escalas))
+            c3.metric("Taxa de Ocupação", f"{(len(df_escalas)/len(df_postos)*100):.1f}%")
+
+    with t2:
+        emp_alvo = st.selectbox("Empresa:", empresas)
+        data_alvo = st.date_input("Data Evento:", datetime.now(), key="admin_data")
+        txt = st.text_area("Texto Bruto (Das XXh as XXh):")
+        if st.button("Gerar Turnos"):
+            for l in txt.split('\n'):
+                if "Das" in l:
+                    conn = sqlite3.connect('sistema.db')
+                    p_id = f"{emp_alvo} | {l} ({data_alvo})"
+                    conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?)", 
+                                 (p_id, emp_alvo, data_alvo.strftime('%Y-%m-%d')))
+                    conn.commit(); conn.close()
+            st.rerun()
+
+    with t3:
+        nova_e = st.text_input("Nome Empresa")
+        if st.button("Adicionar"):
+            conn = sqlite3.connect('sistema.db')
+            conn.execute("INSERT OR IGNORE INTO empresas VALUES (?)", (nova_e,))
+            conn.commit(); conn.close(); st.rerun()
+        
+        st.divider()
+        if empresas:
+            emp_rem = st.selectbox("Empresa a remover:", empresas)
+            if st.button("🗑️ Remover Empresa"):
+                conn = sqlite3.connect('sistema.db')
+                conn.execute("DELETE FROM empresas WHERE nome=?", (emp_rem,))
+                conn.execute("DELETE FROM configuracao_turnos WHERE empresa=?", (emp_rem,))
+                conn.commit(); conn.close(); st.rerun()
+
+# --- INTERFACE DE RESERVA ---
+elif menu == "Reserva de Turnos":
+    st.title(f"📅 Escalas - {data_filtro.strftime('%d/%m/%Y')}")
+    conn = sqlite3.connect('sistema.db')
+    q = "SELECT posto FROM configuracao_turnos WHERE data = ?"
+    p_sql = [data_filtro.strftime('%Y-%m-%d')]
+    if empresa_filtro != "Todas":
+        q += " AND empresa = ?"; p_sql.append(empresa_filtro)
+    
+    postos = [r[0] for r in conn.execute(q, p_sql).fetchall()]
+    ocupados = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
     conn.close()
 
     if postos:
@@ -133,50 +140,48 @@ if menu == "Reserva de Turnos":
             tel = c1.text_input("Telemóvel")
             mail = c2.text_input("Email")
             escolha = c2.selectbox("Turno", postos)
-            q_sms = st.checkbox("Confirmar por SMS (Opcional)")
-            if st.form_submit_button("Confirmar"):
-                if not (nome and tel and mail): st.error("Faltam dados.")
-                elif nome.upper() in reg_nome or tel in reg_tel: st.warning("Já tem um turno.")
-                elif escolha in ocupados: st.error("Ocupado.")
+            q_sms = st.checkbox("Confirmar por SMS")
+            if st.form_submit_button("Reservar"):
+                if not (nome and tel and mail): st.error("Preencha todos os campos")
                 else:
                     conn = sqlite3.connect('sistema.db')
-                    conn.execute("INSERT INTO escalas VALUES (?,?,?,?)", (escolha, nome, tel, mail))
+                    conn.execute("INSERT INTO escalas VALUES (?,?,?,?,?)", 
+                                 (escolha, nome, tel, mail, data_filtro.strftime('%Y-%m-%d')))
                     conn.commit(); conn.close()
-                    enviar_email(mail, nome, escolha)
-                    if q_sms: enviar_sms(tel, f"Confirmado: {escolha}")
-                    enviar_sms(ADMIN_PHONE, f"Novo: {nome} - {escolha}")
-                    st.success("Registado!")
-                    st.rerun()
+                    enviar_email(mail, "Reserva", f"Confirmado: {escolha}")
+                    if q_sms: enviar_sms(tel, f"Reserva: {escolha}")
+                    st.success("Concluído!"); st.rerun()
         
-        # Mapa de postos
-        cols = st.columns(2)
+        cols = st.columns(3)
         for i, p in enumerate(postos):
-            with cols[i%2]:
-                if p in ocupados: st.error(f"❌ {p} ({ocupados[p]})")
+            with cols[i%3]:
+                if p in ocupados: st.error(f"❌ {p}\n({ocupados[p]})")
                 else: st.success(f"✅ {p}")
-    else: st.info("Sem postos.")
+    else: st.info("Sem postos disponíveis.")
 
-# --- CRIAR CONTA E LOGIN ---
-elif menu == "Criar Conta":
-    with st.form("c_conta"):
-        n, e, s = st.text_input("Nome"), st.text_input("Email"), st.text_input("Senha", type="password")
-        if st.form_submit_button("Criar"):
-            conn = sqlite3.connect('sistema.db')
-            try:
-                conn.execute("INSERT INTO clientes VALUES (?,?,?)", (e, s, n))
-                conn.commit(); st.success("Conta criada.")
-            except: st.error("Email existe.")
-            conn.close()
-
+# --- LOGIN E RECUPERAÇÃO ---
 elif menu == "Área de Cliente":
+    st.header("👤 Login")
     e, s = st.text_input("Email"), st.text_input("Senha", type="password")
-    if st.button("Login"):
+    col1, col2, col3 = st.columns(3)
+    if col1.button("Login"):
         conn = sqlite3.connect('sistema.db')
         u = conn.execute("SELECT nome FROM clientes WHERE email=? AND senha=?", (e, s)).fetchone()
-        if u:
-            st.success(f"Olá, {u[0]}")
-            t = conn.execute("SELECT posto FROM escalas WHERE email=?", (e,)).fetchone()
-            if t: st.info(f"O seu turno: {t[0]}")
-            else: st.write("Sem turnos.")
-        else: st.error("Falhou login.")
+        if u: st.success(f"Bem-vindo, {u[0]}!")
+        else: st.error("Dados inválidos.")
         conn.close()
+    
+    if col2.button("Recuperar por SMS"):
+        conn = sqlite3.connect('sistema.db')
+        u = conn.execute("SELECT senha, telefone FROM clientes WHERE email=?", (e,)).fetchone()
+        if u and enviar_sms(u[1], f"Senha: {u[0]}"): st.success("SMS Enviado.")
+        else: st.error("Email ou telemóvel não encontrado.")
+        conn.close()
+
+elif menu == "Criar Conta":
+    with st.form("reg"):
+        n, e, t, s = st.text_input("Nome"), st.text_input("Email"), st.text_input("Telemóvel"), st.text_input("Senha", type="password")
+        if st.form_submit_button("Registar"):
+            conn = sqlite3.connect('sistema.db')
+            conn.execute("INSERT INTO clientes VALUES (?,?,?,?)", (e, s, n, t))
+            conn.commit(); conn.close(); st.success("Conta Criada.")
