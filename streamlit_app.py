@@ -1,22 +1,22 @@
 import streamlit as st
 import sqlite3
-from twilio.rest import Client
+import re
 import pandas as pd
+from twilio.rest import Client
+from io import BytesIO
 
-# --- CONFIGURAÇÕES DE ACESSO ---
+# --- CONFIGURAÇÕES ---
 ADMIN_PASSWORD = "ADMIN"
 TWILIO_ACCOUNT_SID = 'AC0c0da7648d2ad34f5c2df4253e371910'
 TWILIO_AUTH_TOKEN = 'a83cb0baf2dce52ba061171d3f69a9f9'
 TWILIO_NUMBER = "+12402930627"
 ADMIN_PHONE = "+351939227659"
 
-# --- DATABASE ENGINE ---
 def init_db():
     conn = sqlite3.connect('turnos.db', check_same_thread=False)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS escalas 
-                 (posto TEXT PRIMARY KEY, nome TEXT, telefone TEXT, email TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS configuracao_turnos (posto TEXT PRIMARY KEY)''')
+    c.execute('CREATE TABLE IF NOT EXISTS escalas (posto TEXT PRIMARY KEY, nome TEXT, telefone TEXT, email TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS configuracao_turnos (posto TEXT PRIMARY KEY)')
     conn.commit()
     conn.close()
 
@@ -24,126 +24,105 @@ def enviar_sms(numero, mensagem):
     try:
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         client.messages.create(body=mensagem, from_=TWILIO_NUMBER, to=numero)
-    except:
-        pass
+    except: pass
 
-# --- INICIALIZAÇÃO ---
 st.set_page_config(page_title="Gestão de Eventos", layout="wide")
 init_db()
 
-# --- BARRA LATERAL ---
 with st.sidebar:
-    st.title("⚙️ Configurações")
-    modo_admin = st.toggle("Ativar Painel de Gestão")
-    st.divider()
-    st.info("Painel para gestão de postos e base de dados.")
+    st.title("⚙️ Painel")
+    modo_admin = st.toggle("Modo Administrador")
 
-# --- LÓGICA DO ADMINISTRADOR ---
 if modo_admin:
-    st.header("🛠️ Administração do Sistema")
-    senha = st.text_input("Introduza a senha de administrador", type="password")
+    st.header("🛠️ Administração")
+    senha = st.text_input("Senha", type="password")
     
     if senha == ADMIN_PASSWORD:
-        tab1, tab2, tab3 = st.tabs(["➕ Criar Turnos", "📋 Ver Inscrições", "🗄️ Base de Dados Raw"])
+        tab1, tab2, tab3 = st.tabs(["➕ Gerar Turnos", "📋 Inscrições", "📥 Exportar"])
         
         with tab1:
-            st.subheader("Configurar Novos Postos")
-            novo_posto = st.text_input("Designação do Posto (ex: Ericeira 18h-02h)")
-            if st.button("Adicionar Posto à Lista"):
-                if novo_posto:
-                    try:
-                        conn = sqlite3.connect('turnos.db')
-                        conn.execute("INSERT INTO configuracao_turnos (posto) VALUES (?)", (novo_posto,))
-                        conn.commit()
-                        conn.close()
-                        st.success(f"Posto '{novo_posto}' criado!")
-                        st.rerun()
-                    except:
-                        st.error("Este posto já existe.")
+            texto_bruto = st.text_area("Cole o texto aqui:")
+            if st.button("Gerar Turnos"):
+                if texto_bruto:
+                    linhas = texto_bruto.split('\n')
+                    local, data = "", ""
+                    for linha in linhas:
+                        linha = linha.strip()
+                        if not linha or any(x in linha.upper() for x in ["FOGO", "PSG"]): continue
+                        if linha.isupper() and len(linha) > 3: local = linha
+                        data_match = re.search(r"(DIA \d+|\b\d{2}\b)", linha, re.IGNORECASE)
+                        if data_match and not re.search(r"\d+h", linha): data_atual = data_match.group(1)
+                        horario_match = re.search(r"(Das \d{1,2}h as \d{1,2}h.*)", linha, re.IGNORECASE)
+                        if horario_match and local:
+                            posto_final = f"{local} ({data_atual}) | {horario_match.group(1)}"
+                            try:
+                                conn = sqlite3.connect('turnos.db')
+                                conn.execute("INSERT INTO configuracao_turnos VALUES (?)", (posto_final,))
+                                conn.commit()
+                                conn.close()
+                            except: pass
+                    st.rerun()
 
         with tab2:
-            st.subheader("Gestão de Turnos Ocupados")
             conn = sqlite3.connect('turnos.db')
             registos = conn.execute("SELECT * FROM escalas").fetchall()
             conn.close()
-            if registos:
-                for p, n, t, e in registos:
-                    col1, col2 = st.columns([4, 1])
-                    col1.write(f"📍 **{p}** | 👤 {n} | 📞 {t}")
-                    if col2.button("Remover", key=f"del_{p}"):
-                        conn = sqlite3.connect('turnos.db')
-                        conn.execute("DELETE FROM escalas WHERE posto = ?", (p,))
-                        conn.commit()
-                        conn.close()
-                        st.rerun()
-            else:
-                st.write("Nenhum turno ocupado.")
+            for p, n, t, e in registos:
+                c1, c2 = st.columns([4, 1])
+                c1.write(f"📍 **{p}** | 👤 {n}")
+                if c2.button("Remover", key=f"del_{p}"):
+                    conn = sqlite3.connect('turnos.db')
+                    conn.execute("DELETE FROM escalas WHERE posto = ?", (p,))
+                    conn.commit()
+                    conn.close()
+                    st.rerun()
 
         with tab3:
-            st.subheader("Consulta Completa")
+            st.subheader("Descarregar Dados")
             conn = sqlite3.connect('turnos.db')
-            if st.button("Carregar Dados"):
-                df = pd.read_sql_query("SELECT * FROM escalas", conn)
-                st.dataframe(df, use_container_width=True)
-            
-            if st.button("🗑️ Limpar Tudo"):
-                conn.execute("DELETE FROM escalas")
-                conn.execute("DELETE FROM configuracao_turnos")
-                conn.commit()
-                conn.close()
-                st.warning("Dados apagados.")
-                st.rerun()
+            df = pd.read_sql_query("SELECT * FROM escalas", conn)
             conn.close()
-    elif senha:
-        st.error("Senha incorreta.")
+            
+            if not df.empty:
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Inscritos')
+                
+                st.download_button(
+                    label="📥 Baixar Lista em Excel (.xlsx)",
+                    data=output.getvalue(),
+                    file_name="lista_inscritos_turnos.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.info("Ainda não existem inscrições para exportar.")
 
-# --- INTERFACE DO UTILIZADOR ---
 st.title("🎆 Inscrição em Turnos")
 conn = sqlite3.connect('turnos.db')
-postos_db = [row[0] for row in conn.execute("SELECT posto FROM configuracao_turnos").fetchall()]
-ocupados = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
+postos_disponiveis = [row[0] for row in conn.execute("SELECT posto FROM configuracao_turnos").fetchall()]
+inscricoes = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
 conn.close()
 
-if not postos_db:
-    st.warning("⚠️ Aguarde que o administrador configure os postos.")
-else:
-    with st.form("registo_utilizador"):
-        col1, col2 = st.columns(2)
-        nome = col1.text_input("Nome Completo")
-        email = col2.text_input("E-mail")
-        telemovel = col1.text_input("Telemóvel (ex: +351912345678)")
-        escolha = col2.selectbox("Selecione o Turno", postos_db)
-        submeter = st.form_submit_button("Confirmar Marcação")
-
-    if submeter:
-        if not (nome and telemovel and email):
-            st.error("Preencha todos os campos.")
-        elif escolha in ocupados:
-            st.error(f"O turno {escolha} já foi preenchido.")
-        else:
-            try:
+if postos_disponiveis:
+    with st.form("registo"):
+        c1, c2 = st.columns(2)
+        nome = c1.text_input("Nome")
+        tel = c1.text_input("Telemóvel")
+        email = c2.text_input("E-mail")
+        escolha = c2.selectbox("Turno", postos_disponiveis)
+        if st.form_submit_button("Confirmar"):
+            if nome and tel and email and escolha not in inscricoes:
                 conn = sqlite3.connect('turnos.db')
-                conn.execute("INSERT INTO escalas (posto, nome, telefone, email) VALUES (?, ?, ?, ?)", 
-                             (escolha, nome, telemovel, email))
+                conn.execute("INSERT INTO escalas VALUES (?,?,?,?)", (escolha, nome, tel, email))
                 conn.commit()
                 conn.close()
-                st.success("Marcação efetuada!")
-                enviar_sms(telemovel, f"Confirmado: {escolha}")
-                enviar_sms(ADMIN_PHONE, f"Novo: {nome} em {escolha}")
+                enviar_sms(tel, f"Confirmado: {escolha}")
+                enviar_sms(ADMIN_PHONE, f"Registo: {nome} - {escolha}")
                 st.rerun()
-            except:
-                st.error("Erro na base de dados.")
 
-# --- VISUALIZAÇÃO PÚBLICA ---
-st.divider()
-st.subheader("📊 Disponibilidade")
-if postos_db:
-    c1, c2 = st.columns(2)
-    for i, p in enumerate(postos_db):
-        alvo = c1 if i % 2 == 0 else c2
-        if p in ocupados:
-            alvo.error(f"❌ {p} ({ocupados[p]})")
-        else:
-            alvo.success(f"✅ {p}")
-else:
-    st.info("Nenhum turno configurado até ao momento.")
+    st.divider()
+    cols = st.columns(2)
+    for i, p in enumerate(postos_disponiveis):
+        with cols[i % 2]:
+            if p in inscricoes: st.error(f"❌ {p} ({inscricoes[p]})")
+            else: st.success(f"✅ {p}")
