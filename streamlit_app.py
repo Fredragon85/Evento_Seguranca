@@ -2,15 +2,23 @@ import streamlit as st
 import sqlite3
 import re
 import pandas as pd
+import smtplib
+from email.mime.text import MIMEText
 from twilio.rest import Client
 from io import BytesIO
 
 # --- CONFIGURAÇÕES ---
 ADMIN_PASSWORD = "ADMIN"
+# Twilio
 TWILIO_ACCOUNT_SID = 'AC0c0da7648d2ad34f5c2df4253e371910'
 TWILIO_AUTH_TOKEN = 'a83cb0baf2dce52ba061171d3f69a9f9'
 TWILIO_NUMBER = "+12402930627"
 ADMIN_PHONE = "+351939227659"
+# E-mail (SMTP)
+EMAIL_USER = "silvafrederico280385@gmail.com"
+EMAIL_PASS = "*.*Fr3d5ilv488" # Senha de app do Google
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
 
 def init_db():
     conn = sqlite3.connect('turnos.db', check_same_thread=False)
@@ -24,6 +32,18 @@ def enviar_sms(numero, mensagem):
     try:
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         client.messages.create(body=mensagem, from_=TWILIO_NUMBER, to=numero)
+    except: pass
+
+def enviar_email(destinatario, assunto, corpo):
+    try:
+        msg = MIMEText(corpo)
+        msg['Subject'] = assunto
+        msg['From'] = EMAIL_USER
+        msg['To'] = destinatario
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.send_message(msg)
     except: pass
 
 st.set_page_config(page_title="Gestão de Eventos", layout="wide")
@@ -41,20 +61,21 @@ if modo_admin:
         tab1, tab2, tab3 = st.tabs(["➕ Gerar Turnos", "📋 Inscrições", "📥 Exportar"])
         
         with tab1:
-            texto_bruto = st.text_area("Cole o texto aqui:")
+            texto_bruto = st.text_area("Cole o texto aqui:", height=300)
             if st.button("Gerar Turnos"):
                 if texto_bruto:
                     linhas = texto_bruto.split('\n')
-                    local, data = "", ""
+                    local_atual, data_atual = "", ""
                     for linha in linhas:
                         linha = linha.strip()
                         if not linha or any(x in linha.upper() for x in ["FOGO", "PSG"]): continue
-                        if linha.isupper() and len(linha) > 3: local = linha
+                        if linha.isupper() and len(linha) > 3 and "DIA" not in linha: local_atual = linha
                         data_match = re.search(r"(DIA \d+|\b\d{2}\b)", linha, re.IGNORECASE)
-                        if data_match and not re.search(r"\d+h", linha): data_atual = data_match.group(1)
+                        if data_match and not re.search(r"\d+h", linha): data_atual = data_match.group(1).upper()
                         horario_match = re.search(r"(Das \d{1,2}h as \d{1,2}h.*)", linha, re.IGNORECASE)
-                        if horario_match and local:
-                            posto_final = f"{local} ({data_atual}) | {horario_match.group(1)}"
+                        if horario_match and local_atual:
+                            prefixo_data = f" ({data_atual})" if data_atual else ""
+                            posto_final = f"{local_atual}{prefixo_data} | {horario_match.group(1)}"
                             try:
                                 conn = sqlite3.connect('turnos.db')
                                 conn.execute("INSERT INTO configuracao_turnos VALUES (?)", (posto_final,))
@@ -78,26 +99,18 @@ if modo_admin:
                     st.rerun()
 
         with tab3:
-            st.subheader("Descarregar Dados")
+            st.subheader("Exportar Excel")
             conn = sqlite3.connect('turnos.db')
             df = pd.read_sql_query("SELECT * FROM escalas", conn)
             conn.close()
-            
             if not df.empty:
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Inscritos')
-                
-                st.download_button(
-                    label="📥 Baixar Lista em Excel (.xlsx)",
-                    data=output.getvalue(),
-                    file_name="lista_inscritos_turnos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.info("Ainda não existem inscrições para exportar.")
+                    df.to_excel(writer, index=False)
+                st.download_button("📥 Baixar Excel", output.getvalue(), "turnos.xlsx")
 
-st.title("🎆 Inscrição em Turnos")
+# --- INTERFACE UTILIZADOR ---
+st.title("🎆 Reserva de Turnos")
 conn = sqlite3.connect('turnos.db')
 postos_disponiveis = [row[0] for row in conn.execute("SELECT posto FROM configuracao_turnos").fetchall()]
 inscricoes = dict(conn.execute("SELECT posto, nome FROM escalas").fetchall())
@@ -110,14 +123,24 @@ if postos_disponiveis:
         tel = c1.text_input("Telemóvel")
         email = c2.text_input("E-mail")
         escolha = c2.selectbox("Turno", postos_disponiveis)
-        if st.form_submit_button("Confirmar"):
+        notificacao = st.radio("Como deseja receber a confirmação?", ["SMS", "E-mail"], horizontal=True)
+        
+        if st.form_submit_button("Confirmar Marcação"):
             if nome and tel and email and escolha not in inscricoes:
                 conn = sqlite3.connect('turnos.db')
                 conn.execute("INSERT INTO escalas VALUES (?,?,?,?)", (escolha, nome, tel, email))
                 conn.commit()
                 conn.close()
-                enviar_sms(tel, f"Confirmado: {escolha}")
+                
+                msg_texto = f"Olá {nome}, o seu turno foi confirmado: {escolha}"
+                
+                if notificacao == "SMS":
+                    enviar_sms(tel, msg_texto)
+                else:
+                    enviar_email(email, "Confirmação de Turno", msg_texto)
+                
                 enviar_sms(ADMIN_PHONE, f"Registo: {nome} - {escolha}")
+                st.success("Marcação realizada com sucesso!")
                 st.rerun()
 
     st.divider()
