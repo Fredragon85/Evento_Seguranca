@@ -213,3 +213,4 @@ elif nav == "Registo Profissional":
             except: st.error("Erro no registo (Email existente).")
             finally: conn.close()
 
+
