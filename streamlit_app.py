@@ -20,12 +20,12 @@ EMAIL_USER = "silvafrederico280385@gmail.com"
 EMAIL_PASS = "*.*Fr3d5ilv488" 
 TWILIO_SID = 'AC0c0da7648d2ad34f5c2df4253e371910'
 TWILIO_TOKEN = 'a83cb0baf2dce52ba061171d3f69a9f9'
-TWILIO_WHATSAPP = "whatsapp:+14155238886"
+TWILIO_WHATSAPP = "whatsapp:+3519339227659"
 TELEGRAM_TOKEN = "7950949216:AAHTmB8Z5UfV_B7oE8eH-m2U_Y_f6Z3w2kU"
 TELEGRAM_CHAT = "@FredSilva85_pt"
 
 # LINKS DE SUPORTE
-MEU_WA_LINK = "https://wa.me/3519339227659"
+MEU_WA_LINK = "https://wa.me/+3519339227659"
 MEU_TG_LINK = "https://t.me/FredSilva85_pt"
 
 DB_NAME = 'sistema_v56_supreme.db'
@@ -245,4 +245,5 @@ elif nav == "Registo":
                 conn.execute("INSERT OR REPLACE INTO clientes (email, senha, nome, telefone, carta, viatura, cartoes) VALUES (?,?,?,?,?,?,?)", 
                              (e, hashed, n, t, "Sim", "Sim", "VIG"))
             st.session_state.user_email = e; st.rerun()
+
 
