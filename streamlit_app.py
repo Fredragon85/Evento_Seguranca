@@ -6,6 +6,7 @@ import requests
 import logging
 import bcrypt
 import time
+import re
 from email.mime.text import MIMEText
 from twilio.rest import Client
 from math import sin, cos, sqrt, atan2, radians
@@ -23,7 +24,7 @@ TELEGRAM_CHAT = "@FredSilva85_pt"
 
 MEU_WA_LINK = "https://wa.me/3519339227659"
 MEU_TG_LINK = "https://t.me/FredSilva85_pt"
-DB_NAME = 'sistema_v63_supreme.db'
+DB_NAME = 'sistema_v66_supreme.db'
 
 # --- SEGURANÇA ---
 def hash_password(password):
@@ -84,11 +85,11 @@ if 'user_tel' not in st.session_state: st.session_state.user_tel = None
 if 'is_admin' not in st.session_state: st.session_state.is_admin = False
 if 'preview_data' not in st.session_state: st.session_state.preview_data = []
 
-st.set_page_config(page_title="V63 OMNI SUPREME", layout="wide")
+st.set_page_config(page_title="V66 OMNI SUPREME", layout="wide")
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.title("🛡️ SUPREME v63")
+    st.title("🛡️ SUPREME v66")
     if st.session_state.user_tel:
         st.success(f"📱 {st.session_state.user_tel}")
         if st.session_state.is_admin: st.warning("Acesso Administrador")
@@ -131,7 +132,7 @@ if nav == "Turnos em Aberto":
 
 # --- MÓDULO: ÁREA DE CLIENTE ---
 elif nav == "Área de Cliente":
-    if not st.session_state.user_tel: st.warning("Faça login com o seu telemóvel.")
+    if not st.session_state.user_tel: st.warning("Faça login com o telemóvel.")
     else:
         with get_db_conn() as conn:
             saldo = conn.execute("SELECT SUM(valor) FROM escalas WHERE telefone=? AND status='Confirmado' AND checkin=1 AND pago=0", (st.session_state.user_tel,)).fetchone()[0] or 0
@@ -151,26 +152,25 @@ elif nav == "Área de Cliente":
                             if haversine_meters(39.2081, -8.6277, lat, lon) <= 500:
                                 conn.execute("UPDATE escalas SET checkin=1 WHERE posto=? AND telefone=?", (p, st.session_state.user_tel))
                                 st.rerun()
-                            else: st.error("Longe demais do local!")
 
-# --- MÓDULOS ADMIN ---
+# --- PAINEL ADMIN ---
 if st.session_state.is_admin:
     with st.expander("🛠️ PAINEL ADMINISTRATIVO", expanded=True):
         t1, t2, t3, t4 = st.tabs(["🚀 Gerador", "📥 Inscrições", "💰 Pagamentos", "👥 Staff"])
         
         with t1:
             txt = st.text_area("Texto Bruto (DIA/LOCAL/HORARIO/€)")
-            if st.button("Processar Texto"):
+            if st.button("Analisar Texto"):
                 if txt:
                     p_list = []
-                    loc, dia, preco = "Geral", "31", 0
+                    loc, dia = "Geral", "31"
                     for l in txt.split('\n'):
                         l = l.strip()
                         if "DIA" in l.upper(): dia = l
                         elif l.isupper() and len(l) > 3 and "DAS" not in l.upper(): loc = l
-                        elif "Das" in l and "€" in l:
-                            try: preco = float(l.split('€')[0].split('-')[-1].strip())
-                            except: preco = 0
+                        elif "Das" in l:
+                            match = re.search(r'(\d+[\.,]?\d*)\s*(?:€|euro)', l, re.IGNORECASE)
+                            preco = float(match.group(1).replace(',', '.')) if match else 0.0
                             p_list.append({"ID": f"{dia} | {loc} | {l}", "Loc": loc, "Valor": preco})
                     st.session_state.preview_data = p_list
             if st.session_state.preview_data:
@@ -178,7 +178,8 @@ if st.session_state.is_admin:
                 if st.button("✅ Publicar"):
                     with get_db_conn() as conn:
                         for i in st.session_state.preview_data:
-                            conn.execute("INSERT OR IGNORE INTO configuracao_turnos VALUES (?,?,?,?,?,?)", (i['ID'], "PSG", i['Loc'], 39.2081, -8.6277, i['Valor']))
+                            conn.execute("INSERT OR IGNORE INTO configuracao_turnos (posto, empresa, localizacao, lat, lon, valor) VALUES (?,?,?,?,?,?)", 
+                                         (i['ID'], "PSG", i['Loc'], 39.2081, -8.6277, i['Valor']))
                     st.session_state.preview_data = []; st.success("Postos Criados!"); st.rerun()
 
         with t2:
@@ -197,17 +198,26 @@ if st.session_state.is_admin:
                 lista_pagar = conn.execute("SELECT id, nome, posto, valor, pago FROM escalas WHERE status='Confirmado' AND checkin=1").fetchall()
                 for id_p, n_p, post_p, val_p, pago_p in lista_pagar:
                     with st.container(border=True):
-                        col1, col2 = st.columns([4, 1])
-                        col1.write(f"**{n_p}** -> {post_p} (**{val_p}€**)")
+                        c1, c2 = st.columns([4, 1])
+                        c1.write(f"**{n_p}** -> {post_p} (**{val_p}€**)")
                         if not pago_p:
-                            if col2.button("Pagar", key=f"pay_{id_p}"):
+                            if c2.button("Pagar", key=f"pay_{id_p}"):
                                 conn.execute("UPDATE escalas SET pago=1 WHERE id=?", (id_p,)); st.rerun()
-                        else: col2.success("Pago")
+                        else: c2.success("Pago")
+
+        with t4:
+            with get_db_conn() as conn:
+                users = conn.execute("SELECT telefone, nome, is_admin FROM clientes").fetchall()
+                for u_t, u_n, adm in users:
+                    with st.expander(f"{u_n} ({u_t})"):
+                        if not adm and st.button("Promover Admin", key=f"adm_{u_t}"):
+                            conn.execute("UPDATE clientes SET is_admin=1 WHERE telefone=?", (u_t,)); st.rerun()
 
 elif nav == "Registo":
-    with st.form("r"):
+    with st.form("reg"):
         n, t, e, s = st.text_input("Nome"), st.text_input("Telemóvel"), st.text_input("Email"), st.text_input("Senha", type="password")
         if st.form_submit_button("Criar Conta"):
             with get_db_conn() as conn:
-                conn.execute("INSERT OR REPLACE INTO clientes (telefone, senha, nome, email) VALUES (?,?,?,?)", (t, hash_password(s).decode('utf-8'), n, e))
+                conn.execute("INSERT OR REPLACE INTO clientes (telefone, senha, nome, email) VALUES (?,?,?,?)", 
+                             (t, hash_password(s).decode('utf-8'), n, e))
             st.success("Conta criada!"); time.sleep(1); st.rerun()
